@@ -1,273 +1,60 @@
 import React from "react"
 import { importProject, onScanProgress } from "./services/projectService"
 import { useProjectStore } from "./state/projectStore"
-import { buildIndex } from "./services/searchService"
-import { findUnusedFiles } from "./services/unusedService"
-import { calculateMetrics } from "./services/riskService"
 
-import StatsBar      from "./components/Dashboard/StatsBar"
-import FileExplorer  from "./components/Dashboard/FileExplorer"
-import CodePreview   from "./components/Dashboard/CodePreview"
-import ModuleGraph   from "./components/ModuleGraph"
+// Components
+import StatsBar from "./components/Dashboard/StatsBar"
+import FileExplorer from "./components/Dashboard/FileExplorer"
+import CodePreview from "./components/Dashboard/CodePreview"
+import LanguageChart from "./components/Dashboard/LanguageChart"
+import CodeSearch from "./pages/CodeSearch"
+import ModuleGraph from "./components/ModuleGraph"
 import InsightsPanel from "./components/InsightsPanel"
 import UnusedFilesPanel from "./components/UnusedFilesPanel"
-import CodeSearch    from "./pages/CodeSearch"
 import DependencyLens from "./pages/DependencyLens"
-import AIAssistant   from "./pages/AIAssistant"
-import GitActivity   from "./pages/GitActivity"
-import Onboarding    from "./pages/Onboarding"
 import Architecture from "./pages/Architecture"
+import GitHubImportModal from "./components/GitHubImportModel"
+import GitActivity from "./pages/GitActivity"
+import AIAssistant from "./pages/AIAssistant"
+import Onboarding from "./pages/Onboarding"
 
-// ─── TABS ─────────────────────────────────────────────────────────────────────
+import { buildIndex } from "./services/searchService"
+import { findUnusedFiles } from "./services/unusedService"
+
+const C = {
+  bg: "#0a0c0f",
+  surface: "#111318",
+  border: "#1e2330",
+  cyan: "#00e5ff",
+  violet: "#9c6fff",
+  green: "#00e676",
+  red: "#ff4444",
+  amber: "#ffb300",
+  text: "#e2e8f0",
+  muted: "#64748b",
+}
+
 const TABS = [
-  { id: "dashboard",    label: "Dashboard",       icon: "📊" },
-  { id: "architecture", label: "Architecture",    icon: "🏗" },
-  { id: "search",       label: "Code Search",     icon: "🔍" },
-  { id: "lens",         label: "Dependency Lens", icon: "🔗" },
-  { id: "ai",           label: "AI Assistant",    icon: "🤖" },
-  { id: "git",          label: "Git Activity",    icon: "📈" },
-  { id: "onboarding",   label: "Onboarding",      icon: "✅" },
+  { id: "dashboard",     label: "📊 Dashboard" },
+  { id: "architecture",  label: "🗺 Architecture" },
+  { id: "search",        label: "🔍 Search" },
+  { id: "lens",          label: "🔭 Dependency Lens" },
+  { id: "git",           label: "🔧 Git" },
+  { id: "ai",            label: "🤖 AI Assistant" },
+  { id: "onboarding",    label: "🎓 Onboarding" },
 ]
 
-// ─── EMPTY STATE ──────────────────────────────────────────────────────────────
-function EmptyState({ onImport, scanning }) {
-  return (
-    <div style={{
-      display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center",
-      height: "100%", gap: 16, color: "#4a5570"
-    }}>
-      <div style={{
-        width: 64, height: 64, borderRadius: 16,
-        border: "1px dashed #1e2535",
-        display: "flex", alignItems: "center",
-        justifyContent: "center", fontSize: 28
-      }}>
-        📁
-      </div>
-      <div style={{
-        fontSize: 16, fontWeight: 700, color: "#e8edf5"
-      }}>
-        No project loaded
-      </div>
-      <div style={{
-        fontSize: 12, color: "#4a5570",
-        fontFamily: "monospace", textAlign: "center",
-        maxWidth: 300
-      }}>
-        Import a project folder to begin structural analysis,
-        dependency mapping and code exploration
-      </div>
-      <button
-        onClick={onImport}
-        disabled={scanning}
-        style={{
-          background: "#00e5ff", color: "#0a0c0f",
-          border: "none", padding: "9px 24px",
-          borderRadius: 6, fontWeight: 700,
-          cursor: scanning ? "not-allowed" : "pointer",
-          fontSize: 13, opacity: scanning ? 0.6 : 1
-        }}
-      >
-        {scanning ? "Scanning..." : "Import Project"}
-      </button>
-    </div>
-  )
-}
-
-// ─── SCAN PROGRESS BAR ───────────────────────────────────────────────────────
-function ScanProgress({ processed }) {
-  return (
-    <div style={{
-      position: "fixed", bottom: 0, left: 0, right: 0,
-      background: "#0e1117", borderTop: "1px solid #1e2535",
-      padding: "10px 20px", display: "flex",
-      alignItems: "center", gap: 12, zIndex: 50
-    }}>
-      <div style={{
-        width: 8, height: 8, borderRadius: "50%",
-        background: "#00e5ff",
-        boxShadow: "0 0 8px #00e5ff",
-        animation: "pulse 1s infinite"
-      }} />
-      <div style={{
-        fontSize: 11, fontFamily: "monospace", color: "#00e5ff"
-      }}>
-        Scanning project...
-      </div>
-      <div style={{
-        flex: 1, height: 3, background: "#1e2535",
-        borderRadius: 2, overflow: "hidden"
-      }}>
-        <div style={{
-          height: "100%", background: "#00e5ff",
-          borderRadius: 2,
-          width: `${Math.min((processed / 200) * 100, 95)}%`,
-          transition: "width 0.3s ease",
-          boxShadow: "0 0 6px #00e5ff"
-        }} />
-      </div>
-      <div style={{
-        fontSize: 11, fontFamily: "monospace",
-        color: "#4a5570", flexShrink: 0
-      }}>
-        {processed} files
-      </div>
-    </div>
-  )
-}
-
-// ─── TOPBAR ───────────────────────────────────────────────────────────────────
-function Topbar({ scanning, processed, onImport, fileCount }) {
-  return (
-    <div style={{
-      height: 44, background: "#0e1117",
-      borderBottom: "1px solid #1e2535",
-      display: "flex", alignItems: "center",
-      padding: "0 20px", gap: 16, flexShrink: 0
-    }}>
-      {/* Logo */}
-      <div style={{
-        fontFamily: "monospace", fontWeight: 800,
-        fontSize: 13, color: "#00e5ff",
-        letterSpacing: "0.15em"
-      }}>
-        CODE<span style={{ color: "#9c6fff" }}>COMPASS</span>
-      </div>
-
-      <div style={{
-        width: 1, height: 16, background: "#1e2535"
-      }} />
-
-      {/* File count badge */}
-      <div style={{
-        fontSize: 10, fontFamily: "monospace",
-        color: fileCount > 0 ? "#00e5ff" : "#4a5570",
-        display: "flex", alignItems: "center", gap: 6
-      }}>
-        <div style={{
-          width: 5, height: 5, borderRadius: "50%",
-          background: fileCount > 0 ? "#00e676" : "#1e2535",
-          boxShadow: fileCount > 0 ? "0 0 5px #00e676" : "none"
-        }} />
-        {fileCount > 0
-          ? `${fileCount} files indexed`
-          : "no project loaded"
-        }
-      </div>
-
-      {/* Spacer */}
-      <div style={{ flex: 1 }} />
-
-      {/* Import button */}
-      <button
-        onClick={onImport}
-        disabled={scanning}
-        style={{
-          background: scanning ? "#1e2535" : "#00e5ff",
-          color: scanning ? "#4a5570" : "#0a0c0f",
-          border: "none", padding: "6px 18px",
-          borderRadius: 6, fontWeight: 700,
-          cursor: scanning ? "not-allowed" : "pointer",
-          fontSize: 12, transition: "all 0.15s"
-        }}
-      >
-        {scanning ? `Scanning (${processed})` : "Import Project"}
-      </button>
-    </div>
-  )
-}
-
-// ─── TAB BAR ─────────────────────────────────────────────────────────────────
-function TabBar({ active, onChange }) {
-  return (
-    <div style={{
-      display: "flex", gap: 2,
-      padding: "6px 16px",
-      borderBottom: "1px solid #1e2535",
-      background: "#0e1117",
-      flexShrink: 0, overflowX: "auto"
-    }}>
-      {TABS.map(t => (
-        <button
-          key={t.id}
-          onClick={() => onChange(t.id)}
-          style={{
-            padding: "5px 14px",
-            borderRadius: 6, border: "none",
-            background: active === t.id ? "#00e5ff12" : "transparent",
-            color: active === t.id ? "#00e5ff" : "#6b7a99",
-            fontWeight: active === t.id ? 700 : 400,
-            cursor: "pointer", fontSize: 12,
-            whiteSpace: "nowrap",
-            transition: "all 0.15s",
-            borderBottom: active === t.id
-              ? "2px solid #00e5ff"
-              : "2px solid transparent",
-            display: "flex", alignItems: "center", gap: 6
-          }}
-        >
-          <span style={{ fontSize: 13 }}>{t.icon}</span>
-          {t.label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-// ─── DASHBOARD LAYOUT ────────────────────────────────────────────────────────
-function DashboardLayout({ files, unusedFiles }) {
-  const { selectFile } = useProjectStore()
-
-  if (files.length === 0) return null
-
-  return (
-    <div style={{
-      display: "flex", flexDirection: "column",
-      height: "100%", overflow: "hidden"
-    }}>
-      {/* Stats bar */}
-      <div style={{ flexShrink: 0, padding: "14px 14px 10px" }}>
-        <StatsBar />
-      </div>
-
-      {/* Explorer + Preview */}
-      <div style={{
-        flex: 1, display: "flex",
-        gap: 10, padding: "0 14px 14px",
-        overflow: "hidden", minHeight: 0
-      }}>
-        <FileExplorer />
-        <CodePreview />
-
-        {/* Right panel */}
-        <div style={{
-          width: 240, flexShrink: 0,
-          display: "flex", flexDirection: "column",
-          gap: 10, overflow: "auto"
-        }}>
-          <InsightsPanel />
-          {unusedFiles.length > 0 && (
-            <UnusedFilesPanel
-              files={unusedFiles}
-              onSelect={selectFile}
-            />
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
   const { files, setFiles, selectFile } = useProjectStore()
 
-  const [tab,          setTab]          = React.useState("dashboard")
-  const [unusedFiles,  setUnusedFiles]  = React.useState([])
-  const [scanning,     setScanning]     = React.useState(false)
-  const [processed,    setProcessed]    = React.useState(0)
+  const [tab, setTab] = React.useState("dashboard")
+  const [unusedFiles, setUnusedFiles] = React.useState([])
+  const [scanning, setScanning] = React.useState(false)
+  const [processed, setProcessed] = React.useState(0)
+  const [showGitHub, setShowGitHub] = React.useState(false)
+  const [cloneStatus, setCloneStatus] = React.useState(null) // { message, phase }
 
+  // Listen to scan progress
   React.useEffect(() => {
     onScanProgress((p) => {
       setScanning(true)
@@ -275,104 +62,291 @@ export default function App() {
     })
   }, [])
 
+  // Listen to clone progress
+  React.useEffect(() => {
+    if (window.electronAPI?.onCloneProgress) {
+      window.electronAPI.onCloneProgress((data) => {
+        setCloneStatus(data)
+      })
+    }
+  }, [])
+
+  // ── Local import ─────────────────────────────────────────────────────────
   const handleImport = async () => {
     setScanning(true)
-    setProcessed(0)
-
-    try {
-      const result = await importProject()
-      if (result) {
-        const withMetrics = calculateMetrics(result)
-        setFiles(withMetrics)
-        buildIndex(withMetrics)
-        setUnusedFiles(findUnusedFiles(withMetrics))
-        setTab("dashboard")
-      }
-    } finally {
-      setScanning(false)
+    const result = await importProject()
+    if (result) {
+      setFiles(result)
+      buildIndex(result)
+      setUnusedFiles(findUnusedFiles(result))
+      setTab("dashboard")
     }
+    setScanning(false)
   }
 
+  // ── GitHub import (called from modal) ────────────────────────────────────
+  const handleGitHubImport = (result) => {
+    if (result) {
+      setFiles(result)
+      buildIndex(result)
+      setUnusedFiles(findUnusedFiles(result))
+      setTab("dashboard")
+    }
+    setShowGitHub(false)
+    setCloneStatus(null)
+  }
+
+  const clonePhaseColor = { cloning: C.amber, scanning: C.cyan, done: C.green }
+
   return (
-    <>
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1 }
-          50%       { opacity: 0.4 }
-        }
-        * { box-sizing: border-box; }
-        body {
-          margin: 0; padding: 0;
-          background: #0a0c0f;
-          color: #e8edf5;
-          font-family: sans-serif;
-        }
-        ::-webkit-scrollbar { width: 4px; height: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb {
-          background: #1e2535; border-radius: 2px;
-        }
-      `}</style>
+    <div style={{
+      height: "100vh",
+      display: "flex",
+      flexDirection: "column",
+      background: C.bg,
+      color: C.text,
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+    }}>
 
+      {/* ── TOP BAR ─────────────────────────────────────────────────────── */}
       <div style={{
-        height: "100vh", display: "flex",
-        flexDirection: "column", overflow: "hidden",
-        background: "#0a0c0f"
+        padding: "10px 20px",
+        borderBottom: `1px solid ${C.border}`,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: C.surface,
+        flexShrink: 0,
       }}>
-
-        {/* TOPBAR */}
-        <Topbar
-          scanning={scanning}
-          processed={processed}
-          onImport={handleImport}
-          fileCount={files.length}
-        />
-
-        {/* TAB BAR */}
-        <TabBar active={tab} onChange={setTab} />
-
-        {/* PAGE CONTENT */}
-        <div style={{
-          flex: 1, overflow: "hidden",
-          display: "flex", flexDirection: "column"
-        }}>
-
-          {tab === "dashboard" && (
-            files.length === 0
-              ? <EmptyState
-                  onImport={handleImport}
-                  scanning={scanning}
-                />
-              : <DashboardLayout
-                  files={files}
-                  unusedFiles={unusedFiles}
-                />
+        {/* Logo */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 22 }}>🧭</span>
+          <span style={{ fontSize: 17, fontWeight: 800, color: C.cyan, letterSpacing: "-0.5px" }}>
+            CodeCompass
+          </span>
+          {files.length > 0 && (
+            <span style={{
+              background: `${C.green}18`, border: `1px solid ${C.green}40`,
+              borderRadius: 10, color: C.green,
+              fontSize: 10, padding: "2px 8px", marginLeft: 4,
+            }}>
+              {files.length} files loaded
+            </span>
           )}
-
-         {tab === "architecture" && (
-  files.length === 0
-    ? <EmptyState onImport={handleImport} scanning={scanning} />
-    : <div style={{
-        flex: 1, overflow: "hidden",
-        display: "flex", flexDirection: "column"
-      }}>
-        <Architecture />
-      </div>
-)}
-
-          {tab === "search"      && <div style={{ flex: 1, overflow: "auto" }}><CodeSearch /></div>}
-          {tab === "lens"        && <div style={{ flex: 1, overflow: "auto" }}><DependencyLens /></div>}
-          {tab === "ai"          && <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}><AIAssistant /></div>}
-          {tab === "git"         && <div style={{ flex: 1, overflow: "auto" }}><GitActivity /></div>}
-          {tab === "onboarding"  && <div style={{ flex: 1, overflow: "auto" }}><Onboarding /></div>}
-
         </div>
 
-        {/* SCAN PROGRESS */}
-        {scanning && <ScanProgress processed={processed} />}
+        {/* Buttons */}
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {/* Clone status inline badge */}
+          {cloneStatus && cloneStatus.phase !== "done" && (
+            <span style={{
+              fontSize: 11, color: clonePhaseColor[cloneStatus.phase] || C.cyan,
+              background: `${clonePhaseColor[cloneStatus.phase] || C.cyan}15`,
+              border: `1px solid ${clonePhaseColor[cloneStatus.phase] || C.cyan}40`,
+              borderRadius: 8, padding: "4px 10px",
+            }}>
+              ⏳ {cloneStatus.message}
+            </span>
+          )}
 
+          <button
+            onClick={handleImport}
+            disabled={scanning}
+            style={{
+              background: scanning ? C.border : `${C.cyan}15`,
+              border: `1px solid ${scanning ? C.border : C.cyan}`,
+              borderRadius: 8,
+              color: scanning ? C.muted : C.cyan,
+              padding: "8px 16px", fontSize: 12,
+              cursor: scanning ? "not-allowed" : "pointer",
+              fontFamily: "inherit", fontWeight: 600,
+              transition: "all 0.2s",
+            }}
+          >
+            {scanning ? `⏳ Scanning (${processed})...` : "📁 Import Project"}
+          </button>
+
+          <button
+            onClick={() => setShowGitHub(true)}
+            disabled={scanning}
+            style={{
+              background: `${C.violet}15`,
+              border: `1px solid ${C.violet}60`,
+              borderRadius: 8,
+              color: C.violet,
+              padding: "8px 16px", fontSize: 12,
+              cursor: scanning ? "not-allowed" : "pointer",
+              fontFamily: "inherit", fontWeight: 600,
+              transition: "all 0.2s",
+            }}
+          >
+            🐙 Import from GitHub
+          </button>
+        </div>
       </div>
-    </>
+
+      {/* ── TABS ─────────────────────────────────────────────────────────── */}
+      <div style={{
+        display: "flex",
+        gap: 2,
+        padding: "0 16px",
+        borderBottom: `1px solid ${C.border}`,
+        background: C.surface,
+        flexShrink: 0,
+      }}>
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            style={{
+              background: "none",
+              border: "none",
+              borderBottom: tab === t.id ? `2px solid ${C.cyan}` : "2px solid transparent",
+              color: tab === t.id ? C.cyan : C.muted,
+              padding: "11px 16px",
+              fontSize: 12,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              fontWeight: tab === t.id ? 700 : 400,
+              transition: "all 0.15s",
+              letterSpacing: "0.02em",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── EMPTY STATE ──────────────────────────────────────────────────── */}
+      {files.length === 0 && (
+        <div style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 16,
+          color: C.muted,
+        }}>
+          <div style={{ fontSize: 56 }}>🧭</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>
+            Welcome to CodeCompass
+          </div>
+          <div style={{ fontSize: 13, color: C.muted, textAlign: "center", lineHeight: 1.8 }}>
+            Import a local project folder or clone from GitHub to get started.
+          </div>
+          <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+            <button
+              onClick={handleImport}
+              style={{
+                background: `${C.cyan}15`, border: `1px solid ${C.cyan}50`,
+                borderRadius: 10, color: C.cyan,
+                padding: "12px 24px", fontSize: 13,
+                cursor: "pointer", fontFamily: "inherit", fontWeight: 700,
+              }}
+            >
+              📁 Import Local Project
+            </button>
+            <button
+              onClick={() => setShowGitHub(true)}
+              style={{
+                background: `${C.violet}15`, border: `1px solid ${C.violet}50`,
+                borderRadius: 10, color: C.violet,
+                padding: "12px 24px", fontSize: 13,
+                cursor: "pointer", fontFamily: "inherit", fontWeight: 700,
+              }}
+            >
+              🐙 Clone from GitHub
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── MAIN CONTENT ─────────────────────────────────────────────────── */}
+      {files.length > 0 && (
+        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+
+          {/* LEFT: Main page content */}
+          <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
+
+            {/* DASHBOARD */}
+            {tab === "dashboard" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <StatsBar />
+                <div style={{ display: "flex", gap: 14 }}>
+                  <div style={{ flex: "0 0 260px" }}>
+                    <FileExplorer />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <CodePreview />
+                  </div>
+                </div>
+                <LanguageChart />
+              </div>
+            )}
+
+            {/* ARCHITECTURE */}
+            {tab === "architecture" && (
+              <Architecture />
+            )}
+
+            {/* SEARCH */}
+            {tab === "search" && (
+              <CodeSearch />
+            )}
+
+            {/* DEPENDENCY LENS */}
+            {tab === "lens" && (
+              <DependencyLens />
+            )}
+
+            {/* GIT ACTIVITY */}
+            {tab === "git" && (
+              <GitActivity />
+            )}
+
+            {/* AI ASSISTANT */}
+            {tab === "ai" && (
+              <AIAssistant />
+            )}
+
+            {/* ONBOARDING */}
+            {tab === "onboarding" && (
+              <Onboarding />
+            )}
+
+          </div>
+
+          {/* RIGHT: Insights + Unused files panel */}
+          <div style={{
+            width: 280,
+            borderLeft: `1px solid ${C.border}`,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "auto",
+            background: C.surface,
+            flexShrink: 0,
+          }}>
+            <InsightsPanel />
+            <div style={{ borderTop: `1px solid ${C.border}` }}>
+              <UnusedFilesPanel
+                files={unusedFiles}
+                onSelect={(f) => selectFile(f)}
+              />
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* ── GITHUB MODAL ─────────────────────────────────────────────────── */}
+      {showGitHub && (
+        <GitHubImportModal
+          onClose={() => setShowGitHub(false)}
+          onImport={handleGitHubImport}
+        />
+      )}
+
+    </div>
   )
 }
-

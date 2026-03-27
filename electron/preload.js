@@ -1,9 +1,15 @@
 const { contextBridge, ipcRenderer } = require("electron")
 
 contextBridge.exposeInMainWorld("electronAPI", {
+  // ── Project import ─────────────────────────────────────────────────────────
   selectProject: () => ipcRenderer.invoke("project:select"),
-  onScanProgress: (cb) => ipcRenderer.on("project:scan-progress", (_event, progress) => cb(progress)),
-  // legacy name used by UI: keep both for compatibility
-  analyzeDeps: (projectPath) => ipcRenderer.invoke("deps:analyze", projectPath),
-  jsanalyzeDeps: (projectPath) => ipcRenderer.invoke("deps:analyze", projectPath),
+  onScanProgress: (cb) => ipcRenderer.on("project:scan-progress", (_e, p) => cb(p)),
+
+  // ── GitHub import ──────────────────────────────────────────────────────────
+  getGitHubBranches: (opts) => ipcRenderer.invoke("github:get-branches", opts),
+  cloneFromGitHub: (opts) => ipcRenderer.invoke("github:clone", opts),
+  onCloneProgress: (cb) => ipcRenderer.on("github:clone-progress", (_e, d) => cb(d)),
+
+  // ── File editing (line-level editor) ──────────────────────────────────────
+  writeFileLine: (opts) => ipcRenderer.invoke("file:write", opts),
 })
