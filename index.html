@@ -1,7 +1,23 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CodeCompass</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body, #root {
+        height: 100%;
+        font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', monospace;
+        background: #f7f8f6;
+        color: #1a1c1a;
+        -webkit-font-smoothing: antialiased;
+      }
+      ::-webkit-scrollbar { width: 5px; height: 5px; }
+      ::-webkit-scrollbar-track { background: #f0f1ef; }
+      ::-webkit-scrollbar-thumb { background: #c8ccc8; border-radius: 10px; }
+      ::-webkit-scrollbar-thumb:hover { background: #a0a8a0; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

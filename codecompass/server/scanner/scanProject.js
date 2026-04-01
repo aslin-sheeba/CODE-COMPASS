@@ -10,28 +10,20 @@ const VALID_EXTENSIONS = [
   ".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".json"
 ]
 
-// Manifest files that must keep their extension so DependencyLens can find them
 const KEEP_EXTENSION = new Set([
   "package.json", "composer.json", "cargo.toml",
   "gemfile", "go.mod", "go.sum", "pipfile"
 ])
 
-// Normalize path — strip extension for code files, keep for manifests
 function normalizePath(p, filename) {
   const norm = p.replace(/\\/g, "/")
   const base = (filename || "").toLowerCase()
-
-  // Keep extension for manifest files so DependencyLens can identify them
-  if (KEEP_EXTENSION.has(base)) {
-    return norm
-  }
-
+  if (KEEP_EXTENSION.has(base)) return norm
   return norm
     .replace(/\.(ts|tsx|js|jsx|css|html|json)$/, "")
     .replace(/\/index$/, "")
 }
 
-// Resolve relative import → absolute project path
 function resolveImport(fromFile, importPath) {
   if (!importPath) return null
   if (!importPath.startsWith(".")) return null
@@ -45,9 +37,7 @@ async function scanProject(directory, progressCallback = () => {}) {
 
   async function walk(currentDir) {
     let files
-    try {
-      files = await fs.readdir(currentDir)
-    } catch { return }
+    try { files = await fs.readdir(currentDir) } catch { return }
 
     for (const file of files) {
       if (IGNORED_FOLDERS.includes(file)) continue
@@ -59,10 +49,8 @@ async function scanProject(directory, progressCallback = () => {}) {
       if (stat.isDirectory()) {
         await walk(fullPath)
       } else {
-        const ext      = path.extname(file)
+        const ext       = path.extname(file)
         const baseLower = file.toLowerCase()
-
-        // Include manifest files even without standard extensions (e.g. Gemfile)
         const isManifest = KEEP_EXTENSION.has(baseLower)
         if (!VALID_EXTENSIONS.includes(ext) && !isManifest) continue
 
@@ -76,10 +64,13 @@ async function scanProject(directory, progressCallback = () => {}) {
 
         const lines    = content.split("\n").length
         const filePath = normalizePath(fullPath, file)
+        // Store the real absolute disk path (with extension) for file writes
+        const realPath = fullPath.replace(/\\/g, "/")
 
         results.push({
-          path:    filePath,
-          imports: resolvedImports,
+          path:     filePath,   // normalized (no ext) — used for graph edges
+          realPath: realPath,   // actual disk path — used for file writes
+          imports:  resolvedImports,
           lines,
           content,
         })
