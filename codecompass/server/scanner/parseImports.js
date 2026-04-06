@@ -1,4 +1,5 @@
 function parseImports(content) {
+
   const regex = /import\s.*?from\s['"](.*?)['"]/g
   const imports = []
 
