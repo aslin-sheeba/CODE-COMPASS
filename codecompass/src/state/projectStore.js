@@ -1,93 +1,91 @@
 import { create } from "zustand"
 
 export const useProjectStore = create((set, get) => ({
-  // ── Core data ───────────────────────────────────────────────────────────────
   files: [],
   selectedFile: null,
   highlightedFile: null,
-  projectRoot: null,   // root folder path for git operations
-
-  // ── Dependency rules (for DependencyLens) ──────────────────────────────────
+  projectRoot: null,
   rules: [],
 
-  // ── setFiles: compute metrics + build rules ─────────────────────────────────
   setFiles: (files) => {
     const filesWithMeta = files.map(f => ({ ...f }))
 
-    // Detect project root from first file
+    // Detect project root
     let projectRoot = null
     if (filesWithMeta.length > 0) {
-      const firstPath = filesWithMeta[0].projectRoot || filesWithMeta[0].path || ""
-      if (filesWithMeta[0].projectRoot) {
-        projectRoot = filesWithMeta[0].projectRoot
+      const first = filesWithMeta[0]
+      if (first.projectRoot) {
+        projectRoot = first.projectRoot
       } else {
-        // Walk up one level from first file path
-        const parts = firstPath.replace(/\\/g, "/").split("/")
-        projectRoot = parts.slice(0, -1).join("/") || firstPath
+        const parts = (first.path || "").replace(/\\/g, "/").split("/")
+        projectRoot = parts.slice(0, -1).join("/") || first.path
       }
     }
 
-    // Build basename map for edge counting
-    const basenameMap = {}
+    // O(n) incoming count — build reverse index first
+    const incomingCount = {}
     for (const f of filesWithMeta) {
-      const name = f.path.replace(/\\/g, "/").split("/").pop()
-      const base = name.replace(/\.(js|jsx|ts|tsx|css|html|json)$/, "")
-      basenameMap[base] = basenameMap[base] || []
-      basenameMap[base].push(f.path)
-    }
-
-    // Compute per-file metrics
-    for (const f of filesWithMeta) {
-      const imports = Array.isArray(f.imports) ? f.imports : []
-      const uniqueImports = new Set(imports)
-      const localImports = imports.filter(i => i.startsWith(".") || i.startsWith("/"))
-      const externalImports = imports.length - localImports.length
-
-      let incoming = 0
-      const myBasename = f.path.replace(/\\/g, "/").split("/").pop()
+      const myBase = f.path.replace(/\\/g, "/").split("/").pop()
         .replace(/\.(js|jsx|ts|tsx|css|html|json)$/, "")
-      for (const other of filesWithMeta) {
-        if (!other.imports) continue
-        for (const imp of other.imports) {
-          if (imp.includes(myBasename)) { incoming++; break }
+      incomingCount[myBase] = 0
+    }
+    for (const f of filesWithMeta) {
+      if (!f.imports) continue
+      const seen = new Set()
+      for (const imp of f.imports) {
+        const seg = imp.replace(/\\/g, "/").split("/").pop()
+          .replace(/\.(js|jsx|ts|tsx|css|html|json)$/, "")
+        if (!seen.has(seg) && seg in incomingCount) {
+          incomingCount[seg]++
+          seen.add(seg)
         }
       }
+    }
 
+    // Per-file metrics
+    for (const f of filesWithMeta) {
+      const imports         = Array.isArray(f.imports) ? f.imports : []
+      const uniqueImports   = new Set(imports)
+      const localImports    = imports.filter(i => i.startsWith(".") || i.startsWith("/"))
+      const externalImports = imports.length - localImports.length
+
+      const myBase      = f.path.replace(/\\/g, "/").split("/").pop()
+        .replace(/\.(js|jsx|ts|tsx|css|html|json)$/, "")
+      const incoming    = incomingCount[myBase] ?? 0
       const importCount = imports.length
-      const localRatio = importCount ? (localImports.length / importCount) : 0
+      const localRatio  = importCount ? localImports.length / importCount : 0
       const stressScore = Math.round(importCount * (1 + localRatio * 0.6) + incoming * 0.5)
 
       f._meta = {
         importCount, uniqueImports: uniqueImports.size,
         localImports: localImports.length, externalImports,
-        incoming, stressScore
+        incoming, stressScore,
       }
     }
 
     filesWithMeta.sort((a, b) => (b._meta?.stressScore || 0) - (a._meta?.stressScore || 0))
 
-    // Build dependency rules
     const rules = []
-    filesWithMeta.forEach(file => {
+    for (const file of filesWithMeta) {
       const imports = file.imports || []
-      imports.forEach((imp, index) => {
+      for (let index = 0; index < imports.length; index++) {
         rules.push({
-          id: file.path + "-" + index,
-          source: file.path, target: imp,
-          stress: imports.length > 5 ? "High" : imports.length > 2 ? "Medium" : "Low",
-          status: imports.length > 5 ? "Critical" : imports.length > 2 ? "Warning" : "Active",
+          id:     `${file.path}-${index}`,
+          source: file.path,
+          target: imports[index],
+          stress: imports.length > 5 ? "High"    : imports.length > 2 ? "Medium" : "Low",
+          status: imports.length > 5 ? "Critical": imports.length > 2 ? "Warning": "Active",
         })
-      })
-    })
+      }
+    }
 
     set({ files: filesWithMeta, projectRoot, rules })
   },
 
-  selectFile: (file) => set({ selectedFile: file }),
+  selectFile:         (file) => set({ selectedFile: file }),
   setHighlightedFile: (file) => set({ highlightedFile: file }),
-  setProjectRoot: (root) => set({ projectRoot: root }),
+  setProjectRoot:     (root) => set({ projectRoot: root }),
 
-  // ── Rule CRUD ───────────────────────────────────────────────────────────────
   addRule: (rule) => {
     set({ rules: [...get().rules, { ...rule, id: Date.now().toString() }] })
   },

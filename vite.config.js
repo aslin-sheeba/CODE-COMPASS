@@ -6,7 +6,9 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     define: {
-      "import.meta.env.VITE_GEMINI_KEY": JSON.stringify(env.VITE_GEMINI_KEY)
-    }
+      // Correct env var name — matches what aiService reads (#15)
+      "import.meta.env.VITE_ANTHROPIC_KEY": JSON.stringify(env.VITE_ANTHROPIC_KEY),
+      "import.meta.env.VITE_GROQ_KEY":      JSON.stringify(env.VITE_GROQ_KEY),
+    },
   }
 })

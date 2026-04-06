@@ -2,8 +2,7 @@ import React from "react"
 import { useProjectStore } from "../state/projectStore"
 import { T } from "../theme"
 
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyBPwKcSGR6YJW4jh0mA5Mi8_9Q7vl6BDmw"
-const MODEL   = "gemini-2.0-flash"
+const modelId = "llama-3.1-8b-instant";
 
 function now() { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }
 
@@ -29,25 +28,49 @@ function buildSystemPrompt(files) {
 }
 
 async function callAI(messages, systemPrompt) {
-  if (!API_KEY) throw new Error("No API key. Add VITE_GEMINI_API_KEY to .env")
-  const history = messages.filter(m=>m.id!==0).slice(-12).map(m=>({ role: m.role==="assistant"?"model":"user", parts:[{text:m.text}] }))
-  const contents = history.length > 0 ? history : [{ role:"user", parts:[{text:"Hello"}] }]
-  const candidates = ["gemini-2.0-flash","gemini-2.0-flash-lite","gemini-1.5-flash","gemini-1.5-pro"]
-  let lastErr = ""
-  for (const modelId of candidates) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${API_KEY}`
-    let res
-    try { res = await fetch(url, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ system_instruction:{parts:[{text:systemPrompt}]}, contents, generationConfig:{maxOutputTokens:1024,temperature:0.7} }) }) }
-    catch(e) { throw new Error(`Network error: ${e.message}`) }
-    if (res.ok) {
-      const data = await res.json()
-      return data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response."
+  const API_KEY = import.meta.env.VITE_GROQ_API_KEY
+
+  if (!API_KEY) throw new Error("No Groq API key found")
+
+  const lastUserMsg =
+    messages.filter(m => m.role === "user").pop()?.text || "Hello"
+
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "llama-3.1-8b-instant",
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt
+          },
+          {
+            role: "user",
+            content: lastUserMsg
+          }
+        ],
+        temperature: 0.5
+      })
+    })
+
+    const data = await res.json()
+    console.log("GROQ RESPONSE:", data)
+
+    if (!res.ok) {
+      throw new Error(data.error?.message || "Groq API error")
     }
-    const err = await res.text().catch(()=>"")
-    lastErr = `${res.status}: ${err}`
-    if (res.status !== 404) throw new Error(`Gemini error ${res.status}: ${err}`)
+
+    return data.choices?.[0]?.message?.content || "No response"
+
+  } catch (err) {
+    console.error(err)
+    throw new Error("AI failed: " + err.message)
   }
-  throw new Error(`All models failed. Last: ${lastErr}`)
 }
 
 export default function AIAssistant() {
@@ -81,6 +104,29 @@ export default function AIAssistant() {
     finally    { setLoading(false) }
   }
 
+  // Debounced ask helper (React-safe)
+  const askTimeoutRef = React.useRef(null)
+  let lastCall = 0
+
+  function handleAsk(question) {
+    const nowTs = Date.now()
+    if (nowTs - lastCall < 2000) {
+      alert("Wait 2 seconds")
+      return
+    }
+    lastCall = nowTs
+
+    if (askTimeoutRef.current) clearTimeout(askTimeoutRef.current)
+
+    askTimeoutRef.current = setTimeout(() => {
+      handleSend(question)
+    }, 1000) // 1 second delay
+  }
+
+  React.useEffect(() => {
+    return () => { if (askTimeoutRef.current) clearTimeout(askTimeoutRef.current) }
+  }, [])
+
   return (
     <div style={{ display:"flex", flexDirection:"column", height:"100%", background: T.bg }}>
       {/* Header */}
@@ -89,7 +135,7 @@ export default function AIAssistant() {
           <div style={{ width:30, height:30, borderRadius:8, background: T.brandLight, border:`1px solid ${T.brandBorder}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>🤖</div>
           <div>
             <div style={{ fontSize:13, fontWeight:700, color: T.text }}>AI assistant</div>
-            <div style={{ fontSize:10, color: T.textHint, fontFamily:"monospace" }}>gemini {MODEL} · {files.length} files loaded</div>
+                  <div style={{ fontSize:10, color: T.textHint, fontFamily:"monospace" }}>{modelId} · {files.length} files loaded</div>
           </div>
         </div>
         <button onClick={() => { setMessages([BOT_INTRO]); setError(null) }} style={{ padding:"4px 10px", borderRadius: T.r, border:`1px solid ${T.border}`, background:"none", color: T.textSub, cursor:"pointer", fontSize:11, fontFamily:"monospace" }}>

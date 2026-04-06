@@ -1,25 +1,24 @@
+// Correct path matching — normalises both sides before comparing (#13)
+function normPath(p) {
+  return (p || "").replace(/\\/g, "/")
+}
+
 export function findUnusedFiles(files) {
-  const fanInMap = {}
+  const fanInSet = new Set()
 
-  // build fan-in map
-  files.forEach(f => {
-    (f.imports || []).forEach(imp => {
-      fanInMap[imp] = (fanInMap[imp] || 0) + 1
-    })
-  })
-
-  // define root files (you can expand this later)
-  const isRootFile = (path) => {
-    return (
-      path.includes("main.") ||
-      path.includes("App.") ||
-      path.includes("index.")
-    )
+  for (const f of files) {
+    for (const imp of f.imports || []) {
+      fanInSet.add(normPath(imp))
+    }
   }
 
-  // find unused
+  const isRootFile = (path) => {
+    const n = normPath(path)
+    return n.includes("main.") || n.includes("App.") || n.includes("index.")
+  }
+
   return files.filter(f => {
-    const fanIn = fanInMap[f.path] || 0
-    return fanIn === 0 && !isRootFile(f.path)
+    const p = normPath(f.path)
+    return !fanInSet.has(p) && !isRootFile(p)
   })
 }
