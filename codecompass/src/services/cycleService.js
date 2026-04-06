@@ -1,34 +1,30 @@
 export function findCycles(files) {
   const graph = {}
-  files.forEach(f => {
-    graph[f.path] = f.imports || []
-  })
+  for (const f of files) graph[f.path] = f.imports || []
 
-  const visited = new Set()
-  const stack = []
-  const cycles = []
+  const visited  = new Set()
+  const stackSet = new Set()   // O(1) membership test — fixes #2
+  const stackArr = []
+  const cycles   = []
 
   function dfs(node) {
-    if (stack.includes(node)) {
-      const cycleStart = stack.indexOf(node)
-      const cycle = stack.slice(cycleStart).concat(node)
-      cycles.push(cycle)
+    if (stackSet.has(node)) {
+      const start = stackArr.indexOf(node)
+      cycles.push(stackArr.slice(start).concat(node))
       return
     }
-
     if (visited.has(node)) return
 
     visited.add(node)
-    stack.push(node)
+    stackSet.add(node)
+    stackArr.push(node)
 
-    const neighbors = graph[node] || []
-    neighbors.forEach(n => dfs(n))
+    for (const n of (graph[node] || [])) dfs(n)
 
-    stack.pop()
+    stackArr.pop()
+    stackSet.delete(node)
   }
 
-  Object.keys(graph).forEach(n => dfs(n))
-
+  for (const n of Object.keys(graph)) dfs(n)
   return cycles
 }
-
