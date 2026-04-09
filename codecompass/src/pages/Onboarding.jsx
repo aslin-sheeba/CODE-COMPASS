@@ -1,343 +1,527 @@
 import React from "react"
 import { useProjectStore } from "../state/projectStore"
 import { T } from "../theme"
+import { basename, extname, getExtColor, getStressColor } from "../utils"
 
-const MOCK_STATS = { totalCommits:142, contributors:3, thisWeek:12, filesChanged:38, additions:1204, deletions:387, activeBranch:"main", lastCommit:"2h ago" }
-const MOCK_COMMITS = [
-  { hash:"a3f8c1d", message:"feat: add dependency scanner worker",    author:"Aslin", email:"aslin@dev.com", date:"2h ago",  branch:"main",        additions:84,  deletions:12, filesChanged:3 },
-  { hash:"b91e204", message:"fix: remove duplicate testScanner fn",   author:"Aslin", email:"aslin@dev.com", date:"4h ago",  branch:"main",        additions:0,   deletions:18, filesChanged:1 },
-  { hash:"c45d831", message:"refactor: consolidate layout components", author:"Dev",   email:"dev@team.com",  date:"1d ago",  branch:"main",        additions:42,  deletions:96, filesChanged:5 },
-  { hash:"e72b559", message:"feat: wire api.ts to backend routes",    author:"Aslin", email:"aslin@dev.com", date:"1d ago",  branch:"feature/api", additions:31,  deletions:4,  filesChanged:2 },
-  { hash:"f18a340", message:"chore: MongoDB connection retry",        author:"Dev",   email:"dev@team.com",  date:"2d ago",  branch:"main",        additions:22,  deletions:8,  filesChanged:1 },
-]
-const MOCK_CONTRIBUTORS = [
-  { name:"Aslin", commits:78, additions:853, deletions:40,  pct:55 },
-  { name:"Dev",   commits:48, additions:280, deletions:310, pct:34 },
-  { name:"Sam",   commits:16, additions:71,  deletions:37,  pct:11 },
-]
-const MOCK_CHURN = [
-  { file:"src/components/ModuleGraph.jsx", additions:312, deletions:0,  commits:4 },
-  { file:"src/state/projectStore.js",      additions:98,  deletions:14, commits:3 },
-  { file:"src/pages/Dashboard.jsx",        additions:84,  deletions:30, commits:5 },
-]
-function generateHeatmap() {
-  const cells=[]
-  for(let i=0;i<26*7;i++){const r=Math.random();let c=0;if(r>.65)c=Math.floor(Math.random()*2)+1;if(r>.82)c=Math.floor(Math.random()*3)+2;if(r>.94)c=Math.floor(Math.random()*4)+4;cells.push(c)}
-  return cells
-}
-const DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function plural(n, word) { return `${n} ${word}${n !== 1 ? "s" : ""}` }
+function normPath(p = "") { return (p || "").replace(/\\/g, "/") }
+function getDir(p) { const parts = normPath(p).split("/"); return parts.slice(0, -1).join("/") || "." }
+function isExternal(imp) { return imp && !imp.startsWith(".") && !imp.startsWith("/") }
 
-function getHeatColor(c) {
-  if(c===0) return T.surfaceAlt
-  if(c<=1)  return T.greenLight
-  if(c<=3)  return T.green
-  return T.brand
-}
-function getInitials(n) { return (n||"?").split(" ").map(x=>x[0]).join("").toUpperCase().slice(0,2) }
-function getAuthorColor(n) {
-  const cols=[T.brand,T.blue,T.orange,T.green,T.red]
-  let h=0; for(let i=0;i<(n||"").length;i++) h+=n.charCodeAt(i)
-  return cols[h%cols.length]
+function langFromExt(ext) {
+  return { js:"JavaScript", jsx:"React/JSX", ts:"TypeScript", tsx:"React/TSX",
+           py:"Python", rs:"Rust", go:"Go", rb:"Ruby", java:"Java",
+           css:"CSS", html:"HTML", json:"JSON", md:"Markdown" }[ext] || ext?.toUpperCase() || "Unknown"
 }
 
-function SectionTitle({ children }) {
-  return <div style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.1em", color: T.textHint, fontWeight:600, marginBottom:10 }}>{children}</div>
-}
+function uniq(arr) { return [...new Set(arr)] }
 
-function StatCard({ label, value, color }) {
+// ── Section label ─────────────────────────────────────────────────────────────
+function SectionTitle({ children, sub }) {
   return (
-    <div style={{ background: T.surface, border:`1px solid ${T.border}`, borderRadius: T.rMd, padding:"12px 16px", flex:1, borderTop:`2px solid ${color}` }}>
-      <div style={{ fontSize:10, color: T.textHint, textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6 }}>{label}</div>
-      <div style={{ fontSize:22, fontWeight:700, color, fontFamily:"monospace" }}>{value}</div>
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", color: T.textHint, fontWeight: 600 }}>{children}</div>
+      {sub && <div style={{ fontSize: 11, color: T.textSub, marginTop: 3 }}>{sub}</div>}
     </div>
   )
 }
 
-function CommitPushBar({ projectPath, activeBranch }) {
-  const [msg,   setMsg]   = React.useState("")
-  const [push,  setPush]  = React.useState(true)
-  const [status,setStatus]= React.useState(null)
-  const [stMsg, setStMsg] = React.useState("")
-  const [gitSt, setGitSt] = React.useState(null)
-
-  React.useEffect(() => {
-    if (!projectPath || !window.electronAPI?.getGitStatus) return
-    window.electronAPI.getGitStatus(projectPath).then(s => { if (!s?.error) setGitSt(s) }).catch(()=>{})
-  }, [projectPath])
-
-  const changed = gitSt ? (gitSt.modified?.length||0)+(gitSt.added?.length||0)+(gitSt.deleted?.length||0) : 0
-
-  const handle = async () => {
-    if (!msg.trim()) { setStMsg("enter a commit message"); setStatus("error"); return }
-    if (!window.electronAPI?.gitCommitPush) { setStMsg("git IPC not available — run as Electron app"); setStatus("error"); return }
-    setStatus("working"); setStMsg(push ? "staging, committing & pushing…" : "staging & committing…")
-    try {
-      const r = await window.electronAPI.gitCommitPush(projectPath, msg.trim(), push)
-      if (r?.error) { setStatus("error"); setStMsg(r.error) }
-      else { setStatus("success"); setStMsg(push?"committed & pushed!":"committed!"); setMsg("") }
-    } catch(e) { setStatus("error"); setStMsg(e.message||"failed") }
-  }
-
-  const openVSCode = async () => {
-    if (!window.electronAPI?.openInVSCode) return
-    await window.electronAPI.openInVSCode(projectPath)
-  }
-
-  const stColor = { working: T.orange, success: T.green, error: T.red }
-
+// ── Small stat card ───────────────────────────────────────────────────────────
+function StatCard({ label, value, color, sub }) {
   return (
-    <div style={{ background: T.surface, border:`1px solid ${T.border}`, borderRadius: T.rMd, overflow:"hidden", marginBottom:20 }}>
-      <div style={{ padding:"10px 14px", borderBottom:`1px solid ${T.border}`, background: T.surfaceAlt, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-          <span style={{ padding:"3px 10px", borderRadius:20, background: T.greenLight, border:`1px solid ${T.greenBorder}`, color: T.green, fontSize:11, fontFamily:"monospace", fontWeight:500, display:"flex", alignItems:"center", gap:5 }}>
-            <span style={{ width:6, height:6, borderRadius:"50%", background: T.green, display:"inline-block" }} />
-            {activeBranch||"main"}
-          </span>
-          {gitSt && (
-            <span style={{ fontSize:11, color: changed>0?T.orange:T.textHint, fontFamily:"monospace" }}>
-              {changed>0?`${changed} changed`:"clean"}
-            </span>
-          )}
-        </div>
-        <button onClick={openVSCode} style={{ display:"flex", alignItems:"center", gap:5, padding:"5px 11px", background: T.surface, border:`1px solid ${T.border}`, borderRadius: T.r, color: T.textSub, fontSize:11, cursor:"pointer", fontFamily:"monospace" }}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 19.883V4.017a1.5 1.5 0 0 0-.85-1.43zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"/></svg>
-          VS Code
-        </button>
+    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rMd, padding: "12px 16px", flex: 1, borderTop: `2px solid ${color}`, minWidth: 0 }}>
+      <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textHint, marginBottom: 5 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color, fontFamily: "monospace", lineHeight: 1 }}>{value}</div>
+      {sub && <div style={{ fontSize: 9, color: T.textHint, marginTop: 4 }}>{sub}</div>}
+    </div>
+  )
+}
+
+// ── Checklist item ────────────────────────────────────────────────────────────
+function CheckItem({ done, children }) {
+  return (
+    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "7px 0", borderBottom: `1px solid ${T.border}` }}>
+      <div style={{ width: 18, height: 18, borderRadius: 5, flexShrink: 0, marginTop: 1, display: "flex", alignItems: "center", justifyContent: "center",
+        background: done ? T.brandLight : T.surfaceAlt, border: `1px solid ${done ? T.brandBorder : T.border}` }}>
+        {done && <span style={{ fontSize: 10, color: T.brand }}>✓</span>}
       </div>
-      <div style={{ padding:"12px 14px", display:"flex", flexDirection:"column", gap:8 }}>
-        {gitSt && changed>0 && (
-          <div style={{ fontSize:10.5, color: T.orange, fontFamily:"monospace", background: T.orangeLight, border:`1px solid ${T.orangeBorder}`, borderRadius: T.r, padding:"6px 10px" }}>
-            {[...gitSt.modified,...gitSt.added,...gitSt.deleted].slice(0,3).map(f=><div key={f}>• {f}</div>)}
-            {changed>3&&<div>…+{changed-3} more</div>}
-          </div>
-        )}
-        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-          <input value={msg} onChange={e=>setMsg(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()}
-            placeholder='commit message e.g. "feat: add login"'
-            style={{ flex:1, padding:"7px 12px", background: T.bg, border:`1px solid ${T.border}`, borderRadius: T.r, color: T.text, fontFamily:"monospace", fontSize:11.5, outline:"none" }}
-            onFocus={e=>e.target.style.borderColor=T.brand} onBlur={e=>e.target.style.borderColor=T.border}
-          />
-          <label style={{ display:"flex", alignItems:"center", gap:5, fontSize:11, color: T.textSub, cursor:"pointer", flexShrink:0 }}>
-            <div onClick={()=>setPush(p=>!p)} style={{ width:30, height:16, borderRadius:8, background: push?T.brandLight:T.surfaceAlt, border:`1px solid ${push?T.brandBorder:T.border}`, position:"relative", cursor:"pointer", transition:"all 0.15s" }}>
-              <div style={{ position:"absolute", top:2, left: push?15:2, width:10, height:10, borderRadius:"50%", background: push?T.brand:T.textHint, transition:"left 0.15s" }} />
-            </div>
-            push
-          </label>
-          <button onClick={handle} disabled={status==="working"||!msg.trim()}
-            style={{ padding:"7px 16px", borderRadius: T.r, border:"none", background: msg.trim()&&status!=="working"?T.brand: T.border, color: msg.trim()&&status!=="working"?"#fff":T.textHint, cursor: msg.trim()&&status!=="working"?"pointer":"not-allowed", fontSize:11.5, fontWeight:600, fontFamily:"monospace", flexShrink:0 }}>
-            {status==="working"?"…":push?"commit & push":"commit"}
-          </button>
+      <div style={{ fontSize: 12, color: done ? T.textSub : T.text, lineHeight: 1.6, textDecoration: done ? "line-through" : "none" }}>{children}</div>
+    </div>
+  )
+}
+
+// ── File row in key-files list ────────────────────────────────────────────────
+function FileRow({ file, rank, onSelect }) {
+  const [hov, setHov] = React.useState(false)
+  const stress = file._meta?.stressScore || 0
+  const ext = extname(file.path)
+  const color = getExtColor(file.path)
+  return (
+    <div onClick={() => onSelect && onSelect(file)}
+      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
+      style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
+        background: hov ? T.surfaceAlt : "transparent", borderRadius: T.r,
+        cursor: "pointer", transition: "background 0.1s" }}>
+      <div style={{ width: 22, height: 22, borderRadius: 5, background: `${color}18`, border: `1px solid ${color}44`,
+        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color, flexShrink: 0 }}>
+        {ext.slice(0,3).toUpperCase() || "?"}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: T.text, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {basename(file.path)}
         </div>
-        {status && stMsg && (
-          <div style={{ padding:"5px 10px", borderRadius: T.r, fontSize:11, fontFamily:"monospace", background: status==="success"?T.greenLight:status==="error"?T.redLight:T.orangeLight, border:`1px solid ${status==="success"?T.greenBorder:status==="error"?T.redBorder:T.orangeBorder}`, color: stColor[status]||T.text }}>
-            {stMsg}
-          </div>
-        )}
+        <div style={{ fontSize: 10, color: T.textHint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {normPath(file.path)}
+        </div>
+      </div>
+      <div style={{ flexShrink: 0, textAlign: "right" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: getStressColor(stress), fontFamily: "monospace" }}>{stress}</div>
+        <div style={{ fontSize: 9, color: T.textHint }}>stress</div>
       </div>
     </div>
   )
 }
 
-function Heatmap({ data }) {
-  const [hov,setHov]=React.useState(null)
-  return (
-    <div style={{ background: T.surface, border:`1px solid ${T.border}`, borderRadius: T.rMd, overflow:"hidden", marginBottom:20 }}>
-      <div style={{ padding:"10px 14px", borderBottom:`1px solid ${T.border}` }}>
-        <SectionTitle>contribution heatmap — last 26 weeks</SectionTitle>
-      </div>
-      <div style={{ padding:"14px 16px" }}>
-        <div style={{ display:"flex", gap:5 }}>
-          <div style={{ display:"flex", flexDirection:"column", gap:3, paddingTop:1 }}>
-            {DAYS.map((d,i)=><div key={d} style={{ height:12, fontSize:8, color: i%2===0?T.textHint:"transparent", lineHeight:"12px", width:22, textAlign:"right" }}>{d}</div>)}
-          </div>
-          <div style={{ display:"grid", gridTemplateRows:"repeat(7,12px)", gridTemplateColumns:"repeat(26,12px)", gridAutoFlow:"column", gap:3 }}>
-            {data.map((c,i)=>(
-              <div key={i} onMouseEnter={()=>setHov({i,c})} onMouseLeave={()=>setHov(null)}
-                style={{ width:12, height:12, borderRadius:2, background: getHeatColor(c), cursor:"pointer", transform: hov?.i===i?"scale(1.3)":"scale(1)", transition:"transform 0.1s", outline: hov?.i===i?`1px solid ${T.brand}`:"none" }} />
-            ))}
-          </div>
-        </div>
-        <div style={{ display:"flex", alignItems:"center", gap:5, marginTop:10, fontSize:9, color: T.textHint }}>
-          <span>less</span>
-          {[0,1,3,5,7].map(n=><div key={n} style={{ width:11, height:11, borderRadius:2, background: getHeatColor(n) }} />)}
-          <span>more</span>
-          {hov&&<span style={{ marginLeft:10, color: T.brand }}>{hov.c} commit{hov.c!==1?"s":""}</span>}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function CommitRow({ c, expanded, onToggle }) {
-  const [hov,setHov]=React.useState(false)
-  const color=getAuthorColor(c.author)
-  const td = { padding:"9px 12px", borderBottom:`1px solid ${T.border}`, fontSize:12, color: T.text }
-  return (
-    <>
-      <tr onClick={onToggle} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
-        style={{ cursor:"pointer", background: hov ? T.surfaceAlt : "transparent" }}>
-        <td style={td}><span style={{ fontFamily:"monospace", fontSize:10.5, color: T.brand, background: T.brandLight, padding:"2px 7px", borderRadius:4 }}>{c.hash}</span></td>
-        <td style={{ ...td, maxWidth:300 }}><div style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.message}</div></td>
-        <td style={td}><div style={{ display:"flex", alignItems:"center", gap:6 }}>
-          <div style={{ width:22, height:22, borderRadius:6, background:`${color}22`, border:`1px solid ${color}44`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, fontWeight:700, color, fontFamily:"monospace" }}>{getInitials(c.author)}</div>
-          <span style={{ fontSize:11, color: T.textSub }}>{c.author}</span>
-        </div></td>
-        <td style={td}><span style={{ fontSize:10, padding:"2px 7px", borderRadius:4, fontFamily:"monospace", background: c.branch==="main"?T.greenLight:T.blueLight, color: c.branch==="main"?T.green:T.blue }}>{c.branch}</span></td>
-        <td style={td}><span style={{ color: T.green, fontFamily:"monospace", fontSize:10.5 }}>+{c.additions}</span> <span style={{ color: T.red, fontFamily:"monospace", fontSize:10.5 }}>-{c.deletions}</span></td>
-        <td style={{ ...td, color: T.textHint, fontSize:10.5 }}>{c.date}</td>
-      </tr>
-      {expanded&&(
-        <tr><td colSpan={6} style={{ padding:"6px 12px 12px", background: T.surfaceAlt, borderBottom:`1px solid ${T.border}` }}>
-          <div style={{ display:"flex", gap:24, fontFamily:"monospace", fontSize:10.5 }}>
-            <div><div style={{ color: T.textHint, fontSize:9, marginBottom:3 }}>FULL HASH</div><div style={{ color: T.brand }}>{c.fullHash||c.hash}</div></div>
-            <div><div style={{ color: T.textHint, fontSize:9, marginBottom:3 }}>EMAIL</div><div style={{ color: T.textSub }}>{c.email}</div></div>
-            <div><div style={{ color: T.textHint, fontSize:9, marginBottom:3 }}>FILES</div><div style={{ color: T.orange }}>{c.filesChanged} file{c.filesChanged!==1?"s":""}</div></div>
-            <div><div style={{ color: T.textHint, fontSize:9, marginBottom:3 }}>NET</div><div style={{ color: c.additions-c.deletions>=0?T.green:T.red }}>{c.additions-c.deletions>=0?"+":""}{c.additions-c.deletions}</div></div>
-          </div>
-        </td></tr>
-      )}
-    </>
-  )
-}
-
-export default function GitActivity() {
-  const { files } = useProjectStore()
-  const [gitData, setGitData] = React.useState(null)
-  const [loading, setLoading] = React.useState(false)
-  const [error,   setError]   = React.useState(null)
-  const [heatmap, setHeatmap] = React.useState(generateHeatmap)
-  const [expanded,setExpanded]= React.useState(null)
-  const [search,  setSearch]  = React.useState("")
-  const [filter,  setFilter]  = React.useState("all")
-
-  const projectPath = React.useMemo(() => {
-    if (!files?.length) return null
-    const first = (files[0]?.path||"").replace(/\\/g,"/")
-    return first.split("/").slice(0,-2).join("/")||first
+// ── Directory tree summary ─────────────────────────────────────────────────────
+function DirectoryMap({ files }) {
+  const dirs = React.useMemo(() => {
+    const map = {}
+    for (const f of files) {
+      const dir = normPath(f.path).split("/").slice(0, -1).join("/") || "root"
+      const top = dir.split("/")[0] || "root"
+      map[top] = (map[top] || 0) + 1
+    }
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 10)
   }, [files])
 
-  React.useEffect(() => {
-    if (!projectPath||!window.electronAPI?.getGitData) return
-    setLoading(true); setError(null)
-    window.electronAPI.getGitData(projectPath)
-      .then(d => { if(d){setGitData(d);if(d.heatmap)setHeatmap(d.heatmap)}else setError("No git repo found.") })
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false))
-  }, [projectPath])
-
-  const stats        = gitData?.stats        || MOCK_STATS
-  const commits      = gitData?.commits      || MOCK_COMMITS
-  const contributors = gitData?.contributors || MOCK_CONTRIBUTORS
-  const churnFiles   = gitData?.churnFiles   || MOCK_CHURN
-  const isLive       = !!gitData
-
-  const branches = ["all", ...new Set(commits.map(c=>c.branch))]
-  const filtered = commits.filter(c => {
-    const ms = c.message.toLowerCase().includes(search.toLowerCase())||c.author.toLowerCase().includes(search.toLowerCase())||c.hash.toLowerCase().includes(search.toLowerCase())
-    return ms && (filter==="all"||c.branch===filter)
-  })
-
-  const th = { padding:"8px 12px", textAlign:"left", fontFamily:"monospace", fontSize:9, textTransform:"uppercase", letterSpacing:"0.1em", color: T.textHint, borderBottom:`1px solid ${T.border}`, background: T.surfaceAlt, fontWeight:600 }
+  const max = dirs[0]?.[1] || 1
 
   return (
-    <div style={{ padding:20, background: T.bg, minHeight:"100%", color: T.text, fontFamily:"monospace" }}>
-      {/* Header */}
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
-        <div>
-          <div style={{ fontSize:16, fontWeight:700, color: T.text, marginBottom:2 }}>git activity</div>
-          <div style={{ fontSize:11, color: T.textHint }}>commit history · contributors · code churn</div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {dirs.map(([dir, count]) => (
+        <div key={dir} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 11, fontFamily: "monospace", color: T.textSub, width: 120, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dir}/</div>
+          <div style={{ flex: 1, height: 6, background: T.surfaceAlt, borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${(count / max) * 100}%`, background: T.brand, borderRadius: 3, transition: "width 0.6s ease" }} />
+          </div>
+          <div style={{ fontSize: 10, color: T.textHint, fontFamily: "monospace", width: 28, textAlign: "right" }}>{count}</div>
         </div>
-        <span style={{ padding:"3px 10px", borderRadius:20, fontSize:10, fontFamily:"monospace", background: isLive?T.greenLight:T.orangeLight, border:`1px solid ${isLive?T.greenBorder:T.orangeBorder}`, color: isLive?T.green:T.orange }}>
-          {isLive?"● live":"● mock"}
-        </span>
+      ))}
+    </div>
+  )
+}
+
+// ── Language breakdown ─────────────────────────────────────────────────────────
+function LanguageBreakdown({ files }) {
+  const langs = React.useMemo(() => {
+    const map = {}
+    for (const f of files) {
+      const ext = extname(f.path)
+      if (!ext) continue
+      map[ext] = (map[ext] || 0) + 1
+    }
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6)
+  }, [files])
+
+  const total = langs.reduce((s, [, n]) => s + n, 0) || 1
+  const colors = [T.teal, T.blue, T.orange, T.green, "#8b5cf6", T.red]
+
+  return (
+    <div>
+      <div style={{ height: 8, borderRadius: 4, overflow: "hidden", display: "flex", marginBottom: 12 }}>
+        {langs.map(([ext, count], i) => (
+          <div key={ext} style={{ width: `${(count / total) * 100}%`, background: colors[i % colors.length], transition: "width 0.6s" }} />
+        ))}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {langs.map(([ext, count], i) => (
+          <div key={ext} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: colors[i % colors.length], flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: T.textSub, fontFamily: "monospace" }}>
+              {langFromExt(ext)} <span style={{ color: T.textHint }}>({Math.round((count / total) * 100)}%)</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Key concepts / glossary entry ─────────────────────────────────────────────
+function GlossaryEntry({ term, desc, badge, badgeColor }) {
+  return (
+    <div style={{ padding: "10px 14px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.r, display: "flex", gap: 12, alignItems: "flex-start" }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: T.text, fontFamily: "monospace" }}>{term}</span>
+          {badge && <span style={{ fontSize: 9, padding: "1px 7px", borderRadius: 10, background: `${badgeColor}18`, border: `1px solid ${badgeColor}44`, color: badgeColor, fontWeight: 600 }}>{badge}</span>}
+        </div>
+        <div style={{ fontSize: 11, color: T.textSub, lineHeight: 1.6 }}>{desc}</div>
+      </div>
+    </div>
+  )
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+export default function Onboarding() {
+  const { files, selectFile } = useProjectStore()
+  const [activeSection, setActiveSection] = React.useState("overview")
+  const [checks, setChecks] = React.useState({})
+
+  const toggleCheck = (key) => setChecks(p => ({ ...p, [key]: !p[key] }))
+
+  // ── Derived data ───────────────────────────────────────────────────────────
+  const stats = React.useMemo(() => {
+    if (!files.length) return null
+    const exts = new Set(files.map(f => extname(f.path)).filter(Boolean))
+    const topStressed = [...files].sort((a, b) => (b._meta?.stressScore || 0) - (a._meta?.stressScore || 0)).slice(0, 5)
+    const entryPoints = files.filter(f => {
+      const name = basename(f.path).toLowerCase()
+      return name === "index.js" || name === "index.jsx" || name === "main.js" || name === "main.jsx" ||
+             name === "app.js" || name === "app.jsx" || name === "app.tsx" || name === "main.ts" || name === "index.ts"
+    })
+    const externalPkgs = uniq(
+      files.flatMap(f => (f.imports || []).filter(isExternal))
+    ).slice(0, 20)
+    const highCoupling = files.filter(f => (f._meta?.stressScore || 0) > 15)
+    const totalImports = files.reduce((s, f) => s + (f._meta?.importCount || 0), 0)
+    return { exts, topStressed, entryPoints, externalPkgs, highCoupling, totalImports }
+  }, [files])
+
+  const NAV = [
+    { id: "overview",      label: "📊 Overview" },
+    { id: "structure",     label: "📁 Structure" },
+    { id: "keyfiles",      label: "🔥 Key Files" },
+    { id: "dependencies",  label: "📦 Dependencies" },
+    { id: "checklist",     label: "✅ Checklist" },
+    { id: "glossary",      label: "📖 Glossary" },
+  ]
+
+  // ── Empty state ─────────────────────────────────────────────────────────────
+  if (!files.length) {
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 40, background: T.bg, color: T.text, fontFamily: "monospace" }}>
+        <div style={{ fontSize: 40 }}>🧭</div>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>No project loaded</div>
+        <div style={{ fontSize: 12, color: T.textSub, textAlign: "center", lineHeight: 1.7, maxWidth: 380 }}>
+          Import a project using the button in the top bar to generate your personalized onboarding guide.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: "flex", height: "100%", background: T.bg, color: T.text, fontFamily: "monospace" }}>
+
+      {/* Sidebar nav */}
+      <div style={{ width: 180, flexShrink: 0, borderRight: `1px solid ${T.border}`, background: T.surface, display: "flex", flexDirection: "column", padding: "16px 0" }}>
+        <div style={{ padding: "0 14px 14px", borderBottom: `1px solid ${T.border}`, marginBottom: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>onboarding</div>
+          <div style={{ fontSize: 10, color: T.textHint, marginTop: 2 }}>developer guide</div>
+        </div>
+        {NAV.map(n => (
+          <button key={n.id} onClick={() => setActiveSection(n.id)} style={{
+            padding: "8px 14px", border: "none", background: activeSection === n.id ? T.brandLight : "transparent",
+            color: activeSection === n.id ? T.brand : T.textSub, textAlign: "left", cursor: "pointer",
+            fontSize: 12, fontFamily: "monospace", fontWeight: activeSection === n.id ? 600 : 400,
+            borderLeft: `2px solid ${activeSection === n.id ? T.brand : "transparent"}`,
+            transition: "all 0.1s",
+          }}>{n.label}</button>
+        ))}
       </div>
 
-      {loading && <div style={{ padding:"10px 14px", borderRadius: T.r, marginBottom:16, background: T.brandLight, border:`1px solid ${T.brandBorder}`, fontSize:11, color: T.brand }}>⏳ reading git history…</div>}
-      {error   && <div style={{ padding:"10px 14px", borderRadius: T.r, marginBottom:16, background: T.orangeLight, border:`1px solid ${T.orangeBorder}`, borderLeft:`3px solid ${T.orange}`, fontSize:11, color: T.orange }}>⚠ {error} showing mock data.</div>}
+      {/* Content */}
+      <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
 
-      {/* Commit & Push bar */}
-      {projectPath && <CommitPushBar projectPath={projectPath} activeBranch={stats.activeBranch} />}
-
-      {/* Stats */}
-      <div style={{ display:"flex", gap:10, marginBottom:20 }}>
-        <StatCard label="total commits"  value={stats.totalCommits} color={T.teal} />
-        <StatCard label="contributors"   value={stats.contributors} color={T.blue} />
-        <StatCard label="this week"      value={stats.thisWeek}     color={T.brand} />
-        <StatCard label="files changed"  value={stats.filesChanged} color={T.orange} />
-      </div>
-
-      {/* Branch + adds/dels */}
-      <div style={{ display:"flex", gap:10, marginBottom:20 }}>
-        <div style={{ flex:1, background: T.surface, border:`1px solid ${T.border}`, borderRadius: T.rMd, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        {/* ── Overview ──────────────────────────────────────────────────── */}
+        {activeSection === "overview" && (
           <div>
-            <div style={{ fontSize:9, color: T.textHint, textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:4 }}>active branch</div>
-            <div style={{ fontSize:14, fontWeight:700, color: T.text }}>{stats.activeBranch}</div>
-          </div>
-          <div style={{ fontSize:10, color: T.textHint }}>last: {stats.lastCommit}</div>
-        </div>
-        <div style={{ flex:1, background: T.surface, border:`1px solid ${T.border}`, borderRadius: T.rMd, padding:"12px 16px", display:"flex", gap:20, alignItems:"center" }}>
-          <div><div style={{ fontSize:9, color: T.textHint, textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:4 }}>additions</div><div style={{ fontSize:18, fontWeight:700, color: T.green }}>+{stats.additions.toLocaleString()}</div></div>
-          <div style={{ width:1, height:28, background: T.border }} />
-          <div><div style={{ fontSize:9, color: T.textHint, textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:4 }}>deletions</div><div style={{ fontSize:18, fontWeight:700, color: T.red }}>-{stats.deletions.toLocaleString()}</div></div>
-        </div>
-      </div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: T.text, marginBottom: 4 }}>Project Overview</div>
+              <div style={{ fontSize: 11, color: T.textHint }}>auto-generated from scanned source files</div>
+            </div>
 
-      <Heatmap data={heatmap} />
+            {/* Stats row */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+              <StatCard label="Total Files" value={files.length} color={T.blue} sub="scanned source files" />
+              <StatCard label="Languages" value={stats.exts.size} color={T.teal} sub={[...stats.exts].slice(0,3).join(", ")} />
+              <StatCard label="High Coupling" value={stats.highCoupling.length} color={T.orange} sub="stress score > 15" />
+              <StatCard label="Ext. Packages" value={stats.externalPkgs.length} color="#8b5cf6" sub="unique imports" />
+            </div>
 
-      {/* Contributors */}
-      <div style={{ background: T.surface, border:`1px solid ${T.border}`, borderRadius: T.rMd, overflow:"hidden", marginBottom:20 }}>
-        <div style={{ padding:"10px 14px", borderBottom:`1px solid ${T.border}` }}><SectionTitle>contributors</SectionTitle></div>
-        <div style={{ padding:"12px 14px" }}>
-          <div style={{ height:6, borderRadius:3, overflow:"hidden", display:"flex", marginBottom:14 }}>
-            {contributors.map(c=><div key={c.name} style={{ width:`${c.pct}%`, height:"100%", background: getAuthorColor(c.name) }} />)}
-          </div>
-          {contributors.map(c => {
-            const color = getAuthorColor(c.name)
-            return (
-              <div key={c.name} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
-                <div style={{ width:30, height:30, borderRadius:8, background:`${color}18`, border:`1px solid ${color}44`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color, flexShrink:0 }}>{getInitials(c.name)}</div>
-                <div style={{ flex:1 }}>
-                  <div style={{ fontSize:12, fontWeight:600, color: T.text, marginBottom:3 }}>{c.name}</div>
-                  <div style={{ height:4, background: T.surfaceAlt, borderRadius:2, overflow:"hidden" }}>
-                    <div style={{ height:"100%", width:`${c.pct}%`, background: color, borderRadius:2 }} />
+            {/* Language breakdown */}
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rMd, padding: "14px 16px", marginBottom: 16 }}>
+              <SectionTitle>Language Breakdown</SectionTitle>
+              <LanguageBreakdown files={files} />
+            </div>
+
+            {/* Entry points */}
+            {stats.entryPoints.length > 0 && (
+              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rMd, padding: "14px 16px", marginBottom: 16 }}>
+                <SectionTitle children="Entry Points" sub="Files where the app starts — start reading here" />
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {stats.entryPoints.map(f => (
+                    <div key={f.path} onClick={() => selectFile(f)}
+                      style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: T.r, background: T.brandLight, border: `1px solid ${T.brandBorder}`, cursor: "pointer" }}>
+                      <span style={{ fontSize: 12 }}>▶</span>
+                      <span style={{ fontSize: 12, fontFamily: "monospace", color: T.brand, fontWeight: 600 }}>{normPath(f.path)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Quick tips */}
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rMd, padding: "14px 16px" }}>
+              <SectionTitle children="Quick Tips" sub="How to use CodeCompass for onboarding" />
+              {[
+                ["🗺️ Architecture tab", "See the full import dependency graph. Nodes with many edges are your hotspots."],
+                ["🔍 Search tab",       "Full-text search across all files. Great for finding where something is defined."],
+                ["📦 Dependency Lens",  "Check if any npm/pip/cargo packages are outdated or deprecated."],
+                ["🤖 AI Assistant",     "Ask natural language questions about the codebase — powered by Groq."],
+                ["🔥 Key Files below",  "Files with the highest stress scores are the most coupled — review them first."],
+              ].map(([title, desc]) => (
+                <div key={title} style={{ display: "flex", gap: 10, padding: "8px 0", borderBottom: `1px solid ${T.border}` }}>
+                  <span style={{ fontSize: 13, flexShrink: 0 }}>{title.split(" ")[0]}</span>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: T.text, marginBottom: 2 }}>{title.split(" ").slice(1).join(" ")}</div>
+                    <div style={{ fontSize: 11, color: T.textSub, lineHeight: 1.5 }}>{desc}</div>
                   </div>
                 </div>
-                <div style={{ fontSize:14, fontWeight:700, color, flexShrink:0 }}>{c.pct}%</div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Commits table */}
-      <div style={{ marginBottom:8 }}>
-        <div style={{ fontSize:13, fontWeight:700, color: T.text, marginBottom:10 }}>recent commits</div>
-        <div style={{ display:"flex", gap:8, marginBottom:10 }}>
-          <div style={{ position:"relative", flex:1 }}>
-            <input placeholder="search commits, authors…" value={search} onChange={e=>setSearch(e.target.value)}
-              style={{ width:"100%", padding:"7px 12px 7px 30px", background: T.surface, border:`1px solid ${T.border}`, borderRadius: T.r, color: T.text, fontFamily:"monospace", fontSize:11, outline:"none", boxSizing:"border-box" }} />
-            <span style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", fontSize:13, color: T.textHint }}>⌕</span>
+              ))}
+            </div>
           </div>
-          {branches.map(b=>(
-            <button key={b} onClick={()=>setFilter(b)} style={{ padding:"6px 12px", borderRadius: T.r, border:`1px solid ${filter===b?T.brandBorder:T.border}`, background: filter===b?T.brandLight:"transparent", color: filter===b?T.brand:T.textSub, cursor:"pointer", fontSize:11, fontFamily:"monospace" }}>{b}</button>
-          ))}
-        </div>
-      </div>
-      <div style={{ background: T.surface, border:`1px solid ${T.border}`, borderRadius: T.rMd, overflow:"hidden" }}>
-        <table style={{ width:"100%", borderCollapse:"collapse" }}>
-          <thead>
-            <tr><th style={th}>hash</th><th style={th}>message</th><th style={th}>author</th><th style={th}>branch</th><th style={th}>+/-</th><th style={th}>date</th></tr>
-          </thead>
-          <tbody>
-            {filtered.length===0 ? (
-              <tr><td colSpan={6} style={{ padding:28, textAlign:"center", color: T.textHint, fontSize:12 }}>no commits match</td></tr>
-            ) : filtered.map(c=>(
-              <CommitRow key={c.hash} c={c} expanded={expanded===c.hash} onToggle={()=>setExpanded(expanded===c.hash?null:c.hash)} />
+        )}
+
+        {/* ── Structure ─────────────────────────────────────────────────── */}
+        {activeSection === "structure" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: T.text, marginBottom: 4 }}>Directory Structure</div>
+              <div style={{ fontSize: 11, color: T.textHint }}>top-level folders by file count</div>
+            </div>
+
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rMd, padding: "14px 16px", marginBottom: 16 }}>
+              <SectionTitle children="Folder Map" sub="Each bar = number of files in that top-level directory" />
+              <DirectoryMap files={files} />
+            </div>
+
+            {/* Most-imported directories */}
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rMd, padding: "14px 16px" }}>
+              <SectionTitle children="Structural Hotspots" sub="Files that appear most frequently as import targets" />
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {stats.topStressed.map((f, i) => (
+                  <div key={f.path} onClick={() => selectFile(f)}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: T.r,
+                      background: T.surfaceAlt, border: `1px solid ${T.border}`, cursor: "pointer" }}>
+                    <div style={{ width: 20, height: 20, borderRadius: 5, background: T.brandLight, border: `1px solid ${T.brandBorder}`,
+                      display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: T.brand }}>
+                      {i + 1}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontFamily: "monospace", color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {basename(f.path)}
+                      </div>
+                      <div style={{ fontSize: 10, color: T.textHint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {normPath(f.path)}
+                      </div>
+                    </div>
+                    <div style={{ flexShrink: 0, textAlign: "right" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, fontFamily: "monospace", color: getStressColor(f._meta?.stressScore || 0) }}>
+                        {f._meta?.stressScore || 0}
+                      </div>
+                      <div style={{ fontSize: 9, color: T.textHint }}>stress</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Key Files ─────────────────────────────────────────────────── */}
+        {activeSection === "keyfiles" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: T.text, marginBottom: 4 }}>Key Files</div>
+              <div style={{ fontSize: 11, color: T.textHint }}>ranked by stress score (import coupling + fan-in)</div>
+            </div>
+
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rMd, overflow: "hidden", marginBottom: 16 }}>
+              <div style={{ padding: "10px 14px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textHint, fontWeight: 600 }}>
+                  Top {Math.min(files.length, 20)} most coupled files
+                </span>
+                <span style={{ fontSize: 10, color: T.textHint }}>click a file to preview it</span>
+              </div>
+              {[...files].sort((a, b) => (b._meta?.stressScore || 0) - (a._meta?.stressScore || 0)).slice(0, 20).map((f, i) => (
+                <FileRow key={f.path} file={f} rank={i + 1} onSelect={selectFile} />
+              ))}
+            </div>
+
+            {/* High coupling warning */}
+            {stats.highCoupling.length > 0 && (
+              <div style={{ padding: "12px 14px", borderRadius: T.rMd, background: T.orangeLight, border: `1px solid ${T.orangeBorder}`, borderLeft: `3px solid ${T.orange}` }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: T.orange, marginBottom: 4 }}>
+                  ⚠ {plural(stats.highCoupling.length, "file")} with high coupling (stress &gt; 15)
+                </div>
+                <div style={{ fontSize: 11, color: T.textSub, lineHeight: 1.6 }}>
+                  These files are imported by many others. Changes here carry high risk.
+                  Consider splitting responsibilities or introducing interface abstractions.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Dependencies ──────────────────────────────────────────────── */}
+        {activeSection === "dependencies" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: T.text, marginBottom: 4 }}>External Dependencies</div>
+              <div style={{ fontSize: 11, color: T.textHint }}>packages imported across the codebase</div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+              <StatCard label="Unique Packages" value={stats.externalPkgs.length} color={T.blue} />
+              <StatCard label="Total Imports" value={stats.totalImports} color={T.teal} sub="across all files" />
+            </div>
+
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rMd, padding: "14px 16px", marginBottom: 16 }}>
+              <SectionTitle children="Detected External Packages" sub="Unique package names found in import statements" />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {stats.externalPkgs.map(pkg => (
+                  <span key={pkg} style={{ padding: "3px 10px", borderRadius: 20, fontSize: 11, fontFamily: "monospace",
+                    background: T.surfaceAlt, border: `1px solid ${T.border}`, color: T.textSub }}>
+                    {pkg}
+                  </span>
+                ))}
+                {stats.externalPkgs.length === 0 && (
+                  <span style={{ fontSize: 11, color: T.textHint }}>No external packages detected in import statements.</span>
+                )}
+              </div>
+            </div>
+
+            <div style={{ padding: "12px 14px", borderRadius: T.rMd, background: T.brandLight, border: `1px solid ${T.brandBorder}` }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, marginBottom: 4 }}>💡 Full package analysis</div>
+              <div style={{ fontSize: 11, color: T.textSub, lineHeight: 1.6 }}>
+                Switch to the <strong>Dependency Lens</strong> tab for a complete package risk analysis — including
+                installed vs. latest versions, deprecated packages, and update recommendations for npm, pip, cargo, gem, and more.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Checklist ─────────────────────────────────────────────────── */}
+        {activeSection === "checklist" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: T.text, marginBottom: 4 }}>New Developer Checklist</div>
+              <div style={{ fontSize: 11, color: T.textHint }}>track your onboarding progress</div>
+            </div>
+
+            {[
+              {
+                title: "Understanding the codebase",
+                items: [
+                  ["read_overview",    "Read the project README and understand its purpose"],
+                  ["explore_entry",    "Find and open the entry point file (main.js / App.jsx)"],
+                  ["trace_flow",       "Trace a single user-facing feature from UI to data layer"],
+                  ["review_arch",      "Open the Architecture tab and study the dependency graph"],
+                  ["id_hotspots",      "Identify the top 3 high-stress files and understand why they're coupled"],
+                ]
+              },
+              {
+                title: "Dev environment setup",
+                items: [
+                  ["clone_repo",       "Clone the repository locally"],
+                  ["install_deps",     "Install all dependencies (npm install / pip install / etc.)"],
+                  ["run_dev",          "Run the development server successfully"],
+                  ["run_tests",        "Run the test suite and confirm all tests pass"],
+                  ["check_env",        "Set up required .env variables (check .env.example if present)"],
+                ]
+              },
+              {
+                title: "First contributions",
+                items: [
+                  ["first_bug",        "Fix or reproduce a simple bug from the issue tracker"],
+                  ["write_test",       "Write a test for an untested file or function"],
+                  ["code_review",      "Submit a pull request and go through code review"],
+                  ["review_others",    "Review someone else's pull request with useful feedback"],
+                  ["dep_lens",         "Check Dependency Lens for any critical or high-risk packages"],
+                ]
+              },
+              {
+                title: "Team integration",
+                items: [
+                  ["meet_team",        "Meet each team member and understand their areas"],
+                  ["slack_channels",   "Join relevant communication channels or group chats"],
+                  ["read_contrib",     "Read CONTRIBUTING.md or equivalent contribution guide"],
+                  ["ask_questions",    "Ask at least 3 questions you couldn't find answers to in the docs"],
+                ]
+              },
+            ].map(({ title, items }) => (
+              <div key={title} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rMd, padding: "14px 16px", marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: T.text, marginBottom: 10 }}>{title}</div>
+                {items.map(([key, label]) => (
+                  <div key={key} onClick={() => toggleCheck(key)} style={{ cursor: "pointer" }}>
+                    <CheckItem done={!!checks[key]}>{label}</CheckItem>
+                  </div>
+                ))}
+              </div>
             ))}
-          </tbody>
-        </table>
+
+            {/* Progress */}
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rMd, padding: "14px 16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: T.text }}>Overall Progress</span>
+                <span style={{ fontSize: 11, fontFamily: "monospace", color: T.brand }}>
+                  {Object.values(checks).filter(Boolean).length} / 19
+                </span>
+              </div>
+              <div style={{ height: 6, background: T.surfaceAlt, borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ height: "100%", borderRadius: 3, background: T.brand, transition: "width 0.4s ease",
+                  width: `${(Object.values(checks).filter(Boolean).length / 19) * 100}%` }} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Glossary ──────────────────────────────────────────────────── */}
+        {activeSection === "glossary" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: T.text, marginBottom: 4 }}>Glossary</div>
+              <div style={{ fontSize: 11, color: T.textHint }}>CodeCompass terms and key concepts</div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <GlossaryEntry term="Stress Score" badge="metric" badgeColor={T.orange}
+                desc="A composite metric calculated from a file's import count, local-import ratio, and how many other files import it (incoming). Higher = more coupled and riskier to change." />
+              <GlossaryEntry term="Fan-out" badge="metric" badgeColor={T.blue}
+                desc="The number of external packages a file imports. High fan-out means many third-party dependencies — can be a maintenance burden." />
+              <GlossaryEntry term="Fan-in (incoming)" badge="metric" badgeColor={T.teal}
+                desc="How many other files import this one. A file with high fan-in is a 'core module' — changing it affects many dependents." />
+              <GlossaryEntry term="Coupling" badge="concept" badgeColor={T.text}
+                desc="When two modules depend on each other directly. High coupling makes refactoring harder. Low coupling + high cohesion is the goal." />
+              <GlossaryEntry term="Dependency Graph" badge="feature" badgeColor={T.brand}
+                desc="A directed graph where nodes are files and edges are import relationships. Shown in the Architecture tab. Cycles in this graph indicate circular dependencies." />
+              <GlossaryEntry term="Circular Dependency" badge="anti-pattern" badgeColor={T.red}
+                desc="When file A imports B and B imports A (directly or transitively). Can cause initialisation bugs. Shown as highlighted cycles in the Architecture graph." />
+              <GlossaryEntry term="Entry Point" badge="concept" badgeColor={T.green}
+                desc="The file where execution starts — typically index.js, main.jsx, or App.jsx. Good place to begin reading an unfamiliar codebase." />
+              <GlossaryEntry term="Unused File" badge="warning" badgeColor={T.amber}
+                desc="A file that is never imported by any other file in the project. May be dead code, a test fixture, or a standalone script. Shown in the dashboard sidebar." />
+              <GlossaryEntry term="IPC" badge="electron" badgeColor={T.blue}
+                desc="Inter-Process Communication. In Electron apps, IPC is how the renderer (React UI) communicates with the main process (Node.js). Uses ipcMain / ipcRenderer." />
+              <GlossaryEntry term="Groq" badge="ai" badgeColor="#8b5cf6"
+                desc="The AI inference provider powering the AI Assistant. Uses llama-3.1-8b-instant for fast, low-latency responses. Requires a VITE_GROQ_API_KEY environment variable." />
+            </div>
+          </div>
+        )}
+
       </div>
-      <div style={{ marginTop:6, fontSize:10, color: T.textHint }}>{filtered.length} of {commits.length} commits</div>
     </div>
   )
 }

@@ -4,13 +4,13 @@ import { useProjectStore } from "../state/projectStore"
 import { findCycles } from "../services/cycleService"
 import { T } from "../theme"
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const stressColor = s => s > 20 ? T.red : s > 10 ? T.orange : T.green
 const extColor = p => ({ tsx:T.teal,ts:T.blue,jsx:T.teal,js:T.orange,css:"#8b5cf6",json:T.green }[(p||"").match(/\.(\w+)$/)?.[1]]||T.textHint)
 const fileName  = p => (p||"").replace(/\\/g,"/").split("/").pop()
 const isExt     = i => !i.startsWith(".") && !i.startsWith("/")
 
-// ── Shared sub-components ────────────────────────────────────────────────────
+// ── Shared sub-components ─────────────────────────────────────────────────────
 const Label = ({ children }) => (
   <div style={{ fontSize:9, textTransform:"uppercase", letterSpacing:"0.1em", color:T.textHint, fontFamily:"monospace", fontWeight:600, marginBottom:6 }}>
     {children}
@@ -27,7 +27,7 @@ function StatCard({ label, value, sub, color }) {
   )
 }
 
-// ── Legend ───────────────────────────────────────────────────────────────────
+// ── Legend ────────────────────────────────────────────────────────────────────
 function Legend() {
   const items = [
     { color:T.green,  label:"Low stress",    desc:"≤ 10" },
@@ -53,7 +53,7 @@ function Legend() {
   )
 }
 
-// ── Controls ─────────────────────────────────────────────────────────────────
+// ── Controls ──────────────────────────────────────────────────────────────────
 function Controls({ showCycles, setShowCycles, showUnused, setShowUnused, onReset }) {
   const chip = (active, color, label, onClick) => (
     <button onClick={onClick} style={{ padding:"5px 12px", borderRadius:5, border:"1px solid", borderColor:active?`${color}55`:T.border, background:active?`${color}14`:"transparent", color:active?color:T.textHint, fontSize:10, fontFamily:"monospace", cursor:"pointer" }}>
@@ -72,7 +72,7 @@ function Controls({ showCycles, setShowCycles, showUnused, setShowUnused, onRese
   )
 }
 
-// ── Node Detail Panel ─────────────────────────────────────────────────────────
+// ── Node Detail Panel ──────────────────────────────────────────────────────────
 function NodeDetailPanel({ file, files, onClose }) {
   if (!file) return null
   const meta    = file._meta || {}
@@ -166,14 +166,14 @@ function NodeDetailPanel({ file, files, onClose }) {
           </div>
         </div>
 
-        {listBox(imports, i=>i, isExt(imports[0]||".")?"#8b5cf6":T.teal, it=>isExt(it)?"pkg":"rel", "Imports")}
+        {listBox(imports, i=>i, isExt(imports[0]||".")?`#8b5cf6`:T.teal, it=>isExt(it)?"pkg":"rel", "Imports")}
         {listBox(usedBy,  f=>fileName(f.path), T.green, ()=>"←", "Used By")}
       </div>
     </div>
   )
 }
 
-// ── Cycle Detector Panel ──────────────────────────────────────────────────────
+// ── Cycle Detector Panel ───────────────────────────────────────────────────────
 function CycleDetectorPanel({ files, onHighlightCycle }) {
   const [open,    setOpen]    = React.useState(true)
   const [selCycle,setSelCycle]= React.useState(null)
@@ -259,13 +259,17 @@ function CycleDetectorPanel({ files, onHighlightCycle }) {
   )
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+// ── Main Page ──────────────────────────────────────────────────────────────────
 export default function Architecture() {
-  const { files, selectedFile } = useProjectStore()
+  const { files, selectedFile, selectFile } = useProjectStore()
   const [showCycles, setShowCycles] = React.useState(true)
   const [showUnused, setShowUnused] = React.useState(false)
   const [resetKey,   setResetKey]   = React.useState(0)
   const [activeCycle,setActiveCycle]= React.useState(null)
+
+  // FIX: was `useProjectStore.getState().selectFile(null)` called inline inside JSX —
+  // calling store methods directly in JSX can cause issues. Use the bound selectFile from the hook.
+  const handleCloseDetail = React.useCallback(() => selectFile(null), [selectFile])
 
   const totalDeps    = files.reduce((a,f)=>a+(f.imports?.length||0),0)
   const highCoupling = files.filter(f=>(f._meta?.stressScore||0)>20).length
@@ -296,7 +300,7 @@ export default function Architecture() {
           <ModuleGraph key={resetKey} width={selectedFile?760:1060} height={460} activeCycle={activeCycle} />
         </div>
         {selectedFile && (
-          <NodeDetailPanel file={selectedFile} files={files} onClose={()=>useProjectStore.getState().selectFile(null)} />
+          <NodeDetailPanel file={selectedFile} files={files} onClose={handleCloseDetail} />
         )}
       </div>
 

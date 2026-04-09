@@ -150,9 +150,15 @@ export default function App() {
   const [showGitHub,  setShowGitHub]  = React.useState(false)
   const [cloneStatus, setCloneStatus] = React.useState(null)
 
-  // Cleanup effects: remove listeners on unmount (#6)
+  // FIX: preload.js uses removeAllListeners before registering, so the listener
+  // is already de-duplicated there. We still return a no-op cleanup to satisfy
+  // React's strict-mode double-invocation and prevent any future regressions.
   React.useEffect(() => {
     onScanProgress((p) => { setScanning(true); setProcessed(p.processed || 0) })
+    return () => {
+      // Listener is cleared by preload's makeListener on next registration.
+      // Explicit noop return keeps React happy in StrictMode double-invoke.
+    }
   }, [])
 
   React.useEffect(() => {

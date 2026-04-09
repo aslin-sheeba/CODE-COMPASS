@@ -27,13 +27,19 @@ function buildSystemPrompt(files) {
   return `${base}\n\nTotal files: ${files.length}\n\n${summaries}`
 }
 
+// FIX: pass full conversation history so multi-turn works correctly
 async function callAI(messages, systemPrompt) {
   const API_KEY = import.meta.env.VITE_GROQ_API_KEY
 
   if (!API_KEY) throw new Error("No Groq API key found")
 
-  const lastUserMsg =
-    messages.filter(m => m.role === "user").pop()?.text || "Hello"
+  // Build the full message array for Groq — map our internal roles to Groq's format
+  const groqMessages = messages
+    .filter(m => m.role === "user" || m.role === "assistant")
+    .map(m => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: m.text || ""
+    }))
 
   try {
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -45,14 +51,8 @@ async function callAI(messages, systemPrompt) {
       body: JSON.stringify({
         model: "llama-3.1-8b-instant",
         messages: [
-          {
-            role: "system",
-            content: systemPrompt
-          },
-          {
-            role: "user",
-            content: lastUserMsg
-          }
+          { role: "system", content: systemPrompt },
+          ...groqMessages
         ],
         temperature: 0.5
       })
@@ -120,7 +120,7 @@ export default function AIAssistant() {
 
     askTimeoutRef.current = setTimeout(() => {
       handleSend(question)
-    }, 1000) // 1 second delay
+    }, 1000)
   }
 
   React.useEffect(() => {
@@ -135,7 +135,7 @@ export default function AIAssistant() {
           <div style={{ width:30, height:30, borderRadius:8, background: T.brandLight, border:`1px solid ${T.brandBorder}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>🤖</div>
           <div>
             <div style={{ fontSize:13, fontWeight:700, color: T.text }}>AI assistant</div>
-                  <div style={{ fontSize:10, color: T.textHint, fontFamily:"monospace" }}>{modelId} · {files.length} files loaded</div>
+            <div style={{ fontSize:10, color: T.textHint, fontFamily:"monospace" }}>{modelId} · {files.length} files loaded</div>
           </div>
         </div>
         <button onClick={() => { setMessages([BOT_INTRO]); setError(null) }} style={{ padding:"4px 10px", borderRadius: T.r, border:`1px solid ${T.border}`, background:"none", color: T.textSub, cursor:"pointer", fontSize:11, fontFamily:"monospace" }}>

@@ -1,31 +1,47 @@
+'use strict'
+
 const { contextBridge, ipcRenderer } = require("electron")
 
-// Helper: registers a one-time-removable listener to prevent stacking (#5)
-function makeListener(channel) {
-  return (cb) => {
-    const handler = (_e, data) => cb(data)
-    ipcRenderer.removeAllListeners(channel)   // clear any previous registration
-    ipcRenderer.on(channel, handler)
-  }
-}
-
 contextBridge.exposeInMainWorld("electronAPI", {
-  // ── Project import ──────────────────────────────────────────────────────────
-  selectProject:  () => ipcRenderer.invoke("project:select"),
-  onScanProgress: makeListener("project:scan-progress"),
 
-  // ── GitHub import ───────────────────────────────────────────────────────────
-  getGitHubBranches: (opts) => ipcRenderer.invoke("github:get-branches", opts),
-  cloneFromGitHub:   (opts) => ipcRenderer.invoke("github:clone", opts),
-  onCloneProgress:   makeListener("github:clone-progress"),
+  // ─── Project ────────────────────────────────────────────────────────────────
+  selectProject: () =>
+    ipcRenderer.invoke("project:select"),
 
-  // ── File editing ────────────────────────────────────────────────────────────
-  writeFileLine: (opts) => ipcRenderer.invoke("file:write", opts),
+  onScanProgress: (cb) =>
+    ipcRenderer.on("project:scan-progress", (_event, progress) => cb(progress)),
 
-  // ── Git activity ────────────────────────────────────────────────────────────
-  getGitData:    (projectPath)                => ipcRenderer.invoke("git:data", projectPath),
-  getGitDiff:    (projectPath, commitHash)    => ipcRenderer.invoke("git:diff", { projectPath, commitHash }),
-  getGitStatus:  (projectPath)                => ipcRenderer.invoke("git:status", projectPath),
-  gitCommitPush: (projectPath, message, push) => ipcRenderer.invoke("git:commit-push", { projectPath, message, push }),
-  openInVSCode:  (projectPath)                => ipcRenderer.invoke("git:open-vscode", projectPath),
+  // ─── GitHub ─────────────────────────────────────────────────────────────────
+  getBranches: (repoUrl, token) =>
+    ipcRenderer.invoke("github:get-branches", { repoUrl, token }),
+
+  cloneRepo: (repoUrl, branch, token) =>
+    ipcRenderer.invoke("github:clone", { repoUrl, branch, token }),
+
+  onCloneProgress: (cb) =>
+    ipcRenderer.on("github:clone-progress", (_event, data) => cb(data)),
+
+  // ─── File ───────────────────────────────────────────────────────────────────
+  writeFile: (filePath, newContent) =>
+    ipcRenderer.invoke("file:write", { filePath, newContent }),
+
+  // ─── Git ────────────────────────────────────────────────────────────────────
+  getGitData: (projectPath) =>
+    ipcRenderer.invoke("git:data", projectPath),
+
+  getGitDiff: (projectPath, commitHash) =>
+    ipcRenderer.invoke("git:diff", { projectPath, commitHash }),
+
+  getGitStatus: (projectPath) =>
+    ipcRenderer.invoke("git:status", projectPath),
+
+  commitAndPush: (projectPath, message, push) =>
+    ipcRenderer.invoke("git:commit-push", { projectPath, message, push }),
+
+  openInVSCode: (projectPath) =>
+    ipcRenderer.invoke("git:open-vscode", projectPath),
+
+  // ─── Cleanup: remove listeners to avoid memory leaks ───────────────────────
+  removeAllListeners: (channel) =>
+    ipcRenderer.removeAllListeners(channel),
 })

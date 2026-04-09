@@ -1,129 +1,125 @@
 import React from "react"
 import { useProjectStore } from "../../state/projectStore"
 import { T } from "../../theme"
-import { getExtColor, getStressColor, basename, pillStyle } from "../../utils"
-import Prism from "prismjs"
-import "prismjs/components/prism-javascript"
-import "prismjs/components/prism-jsx"
-import "prismjs/components/prism-typescript"
-import "prismjs/components/prism-tsx"
-import "prismjs/components/prism-css"
-import "prismjs/components/prism-markup"
-import "prismjs/components/prism-json"
+import { getExtColor, getStressDot, basename } from "../../utils"
 
-function getLang(path) {
-  const ext = (path.match(/\.(\w+)$/) || [])[1] || ""
-  return { js: "javascript", jsx: "jsx", ts: "typescript", tsx: "tsx", css: "css", html: "markup", json: "json" }[ext] || "javascript"
+function groupByFolder(files) {
+  const groups = {}
+  const roots  = []
+  for (const file of files) {
+    const parts = file.path.replace(/\\/g, "/").split("/")
+    if (parts.length === 1) {
+      roots.push(file)
+    } else {
+      const folder = parts[0]
+      if (!groups[folder]) groups[folder] = []
+      groups[folder].push(file)
+    }
+  }
+  return { groups, roots }
 }
 
-// ── Pill ─────────────────────────────────────────────────────────────────────
-function Pill({ children, color, bg, border }) {
-  return <span style={pillStyle({ color, bg, border })}>{children}</span>
-}
+function FileRow({ file, depth = 0, isSelected, onClick }) {
+  const [hov, setHov] = React.useState(false)
+  const name  = basename(file.path)
+  const dot   = getStressDot(file._meta?.stressScore || 0)
 
-// ── Empty state ───────────────────────────────────────────────────────────────
-function EmptyState() {
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: T.textHint, padding: 40 }}>
-      <div style={{ width: 44, height: 44, borderRadius: 10, background: T.surfaceAlt, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>📄</div>
-      <span style={{ fontSize: 12 }}>select a file to preview</span>
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        display: "flex", alignItems: "center", gap: 6,
+        padding: `4px 12px 4px ${14 + depth * 14}px`,
+        cursor: "pointer",
+        background: isSelected ? T.brandLight : hov ? T.surfaceAlt : "transparent",
+        borderLeft: isSelected ? `2px solid ${T.brand}` : "2px solid transparent",
+        transition: "all 0.1s",
+      }}
+    >
+      <div style={{ width: 7, height: 7, borderRadius: 2, background: dot, flexShrink: 0 }} />
+      <span style={{ fontSize: 11.5, color: isSelected ? T.brand : T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+        {name}
+      </span>
     </div>
   )
 }
 
-// ── Code block ────────────────────────────────────────────────────────────────
-// Prism token CSS is injected once into <head> to avoid per-render <style> tags (#8)
-const PRISM_STYLE_ID = "prism-token-styles"
-function injectPrismStyles() {
-  if (document.getElementById(PRISM_STYLE_ID)) return
-  const style = document.createElement("style")
-  style.id = PRISM_STYLE_ID
-  style.textContent = `
-    .token.keyword                    { color: ${T.kwColor}; }
-    .token.string, .token.attr-value  { color: ${T.strColor}; }
-    .token.function                   { color: ${T.fnColor}; }
-    .token.comment                    { color: ${T.cmColor}; font-style: italic; }
-    .token.number                     { color: ${T.orange}; }
-    .token.operator                   { color: ${T.textSub}; }
-    .token.punctuation                { color: ${T.textSub}; }
-    .token.class-name, .token.tag     { color: ${T.teal}; }
-    .token.attr-name                  { color: ${T.orange}; }
-    .token.boolean                    { color: ${T.kwColor}; }
-  `
-  document.head.appendChild(style)
-}
-
-function CodeBlock({ content, path, highlightLine }) {
-  React.useEffect(() => { injectPrismStyles() }, [])
-
-  const lang = getLang(path)
-  const highlighted = React.useMemo(() => {
-    try {
-      const grammar = Prism.languages[lang] || Prism.languages.javascript
-      return Prism.highlight(content || "", grammar, lang)
-    } catch { return content || "" }
-  }, [content, lang])
-
-  const hlLines = highlighted.split("\n")
-
+function FolderRow({ name, depth = 0, expanded, onClick }) {
+  const [hov, setHov] = React.useState(false)
   return (
-    <div style={{ flex: 1, overflow: "auto", background: T.codeBg, fontFamily: "monospace", fontSize: 11.5, lineHeight: 1.75 }}>
-      {hlLines.map((lineHtml, i) => {
-        const lineNum = i + 1
-        const isHl    = highlightLine === lineNum
-        return (
-          <div key={i} style={{ display: "flex", background: isHl ? T.codeHl : "transparent", borderLeft: isHl ? `2px solid ${T.brand}` : "2px solid transparent" }}>
-            <span style={{ width: 36, textAlign: "right", padding: "0 12px 0 0", color: isHl ? T.brand : T.codeNum, userSelect: "none", flexShrink: 0, fontSize: 10.5 }}>
-              {lineNum}
-            </span>
-            <span dangerouslySetInnerHTML={{ __html: lineHtml || " " }} style={{ flex: 1, paddingRight: 20, color: T.codeText }} />
-          </div>
-        )
-      })}
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        display: "flex", alignItems: "center", gap: 5,
+        padding: `5px 12px 5px ${12 + depth * 14}px`,
+        cursor: "pointer",
+        background: hov ? T.surfaceAlt : "transparent",
+        color: T.textSub, fontSize: 11.5,
+        transition: "background 0.1s",
+      }}
+    >
+      <span style={{ fontSize: 10, color: T.textHint, width: 10, flexShrink: 0 }}>
+        {expanded ? "▾" : "▸"}
+      </span>
+      <span>{name}/</span>
     </div>
   )
 }
 
-// ── Main CodePreview ──────────────────────────────────────────────────────────
-export default function CodePreview({ unusedFiles }) {
-  const { selectedFile } = useProjectStore()
+export default function FileExplorer() {
+  const { files, selectedFile, selectFile } = useProjectStore()
+  const [expanded, setExpanded] = React.useState({})
 
-  if (!selectedFile) return (
-    <div style={{ flex: 1, display: "flex", background: T.codeBg }}><EmptyState /></div>
+  React.useEffect(() => {
+    const init = {}
+    for (const file of files) {
+      const parts = file.path.replace(/\\/g, "/").split("/")
+      for (let i = 1; i < parts.length; i++) {
+        init[parts.slice(0, i).join("/")] = true
+      }
+    }
+    setExpanded(init)
+  }, [files.length])
+
+  if (!files.length) return (
+    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: T.textHint, fontSize: 11 }}>
+      no project loaded
+    </div>
   )
 
-  const meta    = selectedFile._meta || {}
-  const fname   = basename(selectedFile.path)
-  const stress  = meta.stressScore || 0
-  const imports = (selectedFile.imports || []).length
-  const lines   = selectedFile.lines || 0
+  const { groups, roots } = groupByFolder(files)
+
+  const toggleFolder = (key) => setExpanded(e => ({ ...e, [key]: !e[key] }))
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", background: T.codeBg, overflow: "hidden" }}>
-      <div style={{ padding: "10px 16px", borderBottom: `1px solid ${T.border}`, background: T.surface, display: "flex", alignItems: "center", gap: 10, flexShrink: 0, flexWrap: "wrap" }}>
-        <Pill color={T.textSub} bg={T.surfaceAlt} border={T.border}>{fname}</Pill>
-        <Pill color={T.teal} bg={T.tealLight} border={T.tealBorder}>{lines} lines</Pill>
-        {stress > 0 && (
-          <Pill
-            color={getStressColor(stress)}
-            bg={stress > 15 ? T.redLight : stress > 8 ? T.orangeLight : T.greenLight}
-            border={stress > 15 ? T.redBorder : stress > 8 ? T.orangeBorder : T.greenBorder}
-          >
-            risk: {Math.min(Math.round(stress / 4), 10)}
-          </Pill>
-        )}
-        {imports > 0 && <Pill color={T.pink} bg={T.pinkLight} border={T.pinkBorder}>{imports} imports</Pill>}
-        <span style={{ marginLeft: "auto", fontSize: 10.5, color: T.textHint, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 280 }}>
-          {selectedFile.path.replace(/\\/g, "/")}
-        </span>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      <div style={{ padding: "8px 14px 6px", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textHint, fontWeight: 600, borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+        explorer
       </div>
 
-      <CodeBlock content={selectedFile.content || "// file content not available"} path={selectedFile.path} />
+      <div style={{ flex: 1, overflowY: "auto", paddingBottom: 8 }}>
+        {roots.map(file => (
+          <FileRow key={file.path} file={file} depth={0} isSelected={selectedFile?.path === file.path} onClick={() => selectFile(file)} />
+        ))}
 
-      <div style={{ height: 30, borderTop: `1px solid ${T.border}`, background: T.surface, display: "flex", alignItems: "center", padding: "0 14px", gap: 12, flexShrink: 0 }}>
-        <span style={{ fontSize: 12, color: T.textHint, cursor: "pointer" }}>◀</span>
-        <div style={{ flex: 1, height: 4, background: T.border, borderRadius: 2 }} />
-        <span style={{ fontSize: 12, color: T.textHint, cursor: "pointer" }}>▶</span>
+        {Object.entries(groups).map(([folder, folderFiles]) => {
+          const isOpen = expanded[folder] !== false
+          return (
+            <div key={folder}>
+              <FolderRow name={folder} depth={0} expanded={isOpen} onClick={() => toggleFolder(folder)} />
+              {isOpen && folderFiles.map(file => {
+                const depth = Math.max(1, file.path.replace(/\\/g, "/").split("/").length - 2)
+                return (
+                  <FileRow key={file.path} file={file} depth={depth} isSelected={selectedFile?.path === file.path} onClick={() => selectFile(file)} />
+                )
+              })}
+            </div>
+          )
+        })}
       </div>
     </div>
   )

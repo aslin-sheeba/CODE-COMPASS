@@ -1,7 +1,7 @@
 import React from "react"
 import { useProjectStore } from "../../state/projectStore"
 import { T } from "../../theme"
-import { getExtColor, getStressDot, basename } from "../../utils"
+import { getStressDot, basename } from "../../utils"
 
 function groupByFolder(files) {
   const groups = {}
@@ -21,8 +21,8 @@ function groupByFolder(files) {
 
 function FileRow({ file, depth = 0, isSelected, onClick }) {
   const [hov, setHov] = React.useState(false)
-  const name  = basename(file.path)
-  const dot   = getStressDot(file._meta?.stressScore || 0)
+  const name = basename(file.path)
+  const dot  = getStressDot(file._meta?.stressScore || 0)
 
   return (
     <div
@@ -92,7 +92,6 @@ export default function FileExplorer() {
   )
 
   const { groups, roots } = groupByFolder(files)
-
   const toggleFolder = (key) => setExpanded(e => ({ ...e, [key]: !e[key] }))
 
   return (
