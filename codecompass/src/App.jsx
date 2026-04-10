@@ -4,21 +4,25 @@ import { useProjectStore } from "./state/projectStore"
 import { T } from "./theme"
 import { pillStyle, basename } from "./utils"
 
-import FileExplorer   from "./components/Dashboard/FileExplorer"
-import CodePreview    from "./components/Dashboard/CodePreview"
-import CodeSearch     from "./pages/CodeSearch"
-import DependencyLens from "./pages/DependencyLens"
-import Architecture   from "./pages/Architecture"
+import FileExplorer      from "./components/Dashboard/FileExplorer"
+import CodePreview       from "./components/Dashboard/CodePreview"
+import StatsCards        from "./components/StatsCards"
+import LanguageChart     from "./components/Dashboard/LanguageChart"
+import InsightsPanel     from "./components/InsightsPanel"
+import UnusedFilesPanel  from "./components/UnusedFilesPanel"
+import CodeSearch        from "./pages/CodeSearch"
+import DependencyLens    from "./pages/DependencyLens"
+import Architecture      from "./pages/Architecture"
 import GitHubImportModal from "./components/GitHubImportModel"
-import GitActivity    from "./pages/GitActivity"
-import AIAssistant    from "./pages/AIAssistant"
-import Onboarding     from "./pages/Onboarding"
-import ErrorBoundary  from "./components/ErrorBoundary"
+import GitActivity       from "./pages/GitActivity"
+import AIAssistant       from "./pages/AIAssistant"
+import Onboarding        from "./pages/Onboarding"
+import ErrorBoundary     from "./components/ErrorBoundary"
 
 import { buildIndex }      from "./services/searchService"
 import { findUnusedFiles } from "./services/unusedService"
 
-// ── Hoisted static styles (#15) ─────────────────────────────────────────────
+// ── Static styles ─────────────────────────────────────────────────────────────
 const S = {
   root: {
     height: "100vh", display: "flex", flexDirection: "column",
@@ -40,16 +44,41 @@ const S = {
     background: T.surface, flexShrink: 0,
     paddingLeft: 12, gap: 0, overflowX: "auto",
   },
-  bodyWrap:  { flex: 1, display: "flex", overflow: "hidden", background: T.bg },
-  leftPane:  { width: 220, flexShrink: 0, borderRight: `1px solid ${T.border}`, background: T.surface, display: "flex", flexDirection: "column", overflow: "hidden" },
-  centerPane:{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column" },
+  bodyWrap:   { flex: 1, display: "flex", overflow: "hidden", background: T.bg },
+  leftPane:   { width: 220, flexShrink: 0, borderRight: `1px solid ${T.border}`, background: T.surface, display: "flex", flexDirection: "column", overflow: "hidden" },
+  centerPane: { flex: 1, overflow: "auto", display: "flex", flexDirection: "column" },
   btnBase: {
     padding: "5px 14px", borderRadius: T.r,
     fontSize: 12, fontFamily: "monospace", cursor: "pointer",
   },
 }
 
-// ── Pill ─────────────────────────────────────────────────────────────────────
+// ── Scan progress bar ─────────────────────────────────────────────────────────
+function ScanProgressBar({ scanning, processed, total }) {
+  if (!scanning) return null
+  const pct = total ? Math.round((processed / total) * 100) : null
+
+  return (
+    <div style={{
+      height: 3, background: T.surfaceAlt, flexShrink: 0, overflow: "hidden",
+    }}>
+      <div style={{
+        height: "100%", background: T.brand,
+        width: pct != null ? `${pct}%` : "40%",
+        transition: pct != null ? "width 0.3s ease" : "none",
+        animation: pct == null ? "scanPulse 1.4s ease-in-out infinite" : "none",
+      }} />
+      <style>{`
+        @keyframes scanPulse {
+          0%   { transform: translateX(-100%); width: 40%; }
+          100% { transform: translateX(350%);  width: 40%; }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+// ── Pill ──────────────────────────────────────────────────────────────────────
 const Pill = React.memo(function Pill({ children, color = T.teal, bg = T.tealLight, border = T.tealBorder }) {
   return <span style={pillStyle({ color, bg, border })}>{children}</span>
 })
@@ -57,10 +86,15 @@ const Pill = React.memo(function Pill({ children, color = T.teal, bg = T.tealLig
 // ── TopBar ────────────────────────────────────────────────────────────────────
 const TopBar = React.memo(function TopBar({ files, scanning, processed, onImport, setShowGitHub, cloneStatus }) {
   return (
-    <div style={{ ...S.topBar, background: T.surface }}>
+    <div style={S.topBar}>
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
         <span style={S.logoText}>compass</span>
         {files.length > 0 && <Pill>{files.length} files</Pill>}
+        {scanning && (
+          <Pill color={T.brand} bg={T.brandLight} border={T.brandBorder}>
+            scanning… {processed > 0 ? `${processed}` : ""}
+          </Pill>
+        )}
         {cloneStatus && cloneStatus.phase !== "done" && (
           <Pill color={T.orange} bg={T.orangeLight} border={T.orangeBorder}>
             ⏳ {cloneStatus.message}
@@ -91,7 +125,7 @@ const TopBar = React.memo(function TopBar({ files, scanning, processed, onImport
 
 // ── TabBar ────────────────────────────────────────────────────────────────────
 const TABS_MAP = [
-  { id: "dashboard",    labelFn: (sf) => sf ? basename(sf.path) : "App.jsx" },
+  { id: "dashboard",    labelFn: (sf) => sf ? basename(sf.path) : "dashboard" },
   { id: "architecture", labelFn: () => "architecture" },
   { id: "search",       labelFn: () => "search" },
   { id: "lens",         labelFn: () => "dependency lens" },
@@ -139,102 +173,9 @@ const Welcome = React.memo(function Welcome({ onImport, onGitHub }) {
   )
 })
 
-// ── Main App ─────────────────────────────────────────────────────────────────
-export default function App() {
-  const { files, setFiles, selectFile, selectedFile } = useProjectStore()
-
-  const [tab,         setTab]         = React.useState("dashboard")
-  const [unusedFiles, setUnusedFiles] = React.useState([])
-  const [scanning,    setScanning]    = React.useState(false)
-  const [processed,   setProcessed]   = React.useState(0)
-  const [showGitHub,  setShowGitHub]  = React.useState(false)
-  const [cloneStatus, setCloneStatus] = React.useState(null)
-
-  // FIX: preload.js uses removeAllListeners before registering, so the listener
-  // is already de-duplicated there. We still return a no-op cleanup to satisfy
-  // React's strict-mode double-invocation and prevent any future regressions.
-  React.useEffect(() => {
-    onScanProgress((p) => { setScanning(true); setProcessed(p.processed || 0) })
-    return () => {
-      // Listener is cleared by preload's makeListener on next registration.
-      // Explicit noop return keeps React happy in StrictMode double-invoke.
-    }
-  }, [])
-
-  React.useEffect(() => {
-    if (!window.electronAPI?.onCloneProgress) return
-    window.electronAPI.onCloneProgress((data) => setCloneStatus(data))
-  }, [])
-
-  const handleImport = React.useCallback(async () => {
-    setScanning(true)
-    const result = await importProject()
-    if (result) {
-      setFiles(result)
-      buildIndex(result)
-      setUnusedFiles(findUnusedFiles(result))
-      setTab("dashboard")
-    }
-    setScanning(false)
-  }, [setFiles])
-
-  const handleGitHubImport = React.useCallback((result) => {
-    if (result) {
-      setFiles(result)
-      buildIndex(result)
-      setUnusedFiles(findUnusedFiles(result))
-      setTab("dashboard")
-    }
-    setShowGitHub(false)
-    setCloneStatus(null)
-  }, [setFiles])
-
-  return (
-    <div style={{ ...S.root, background: T.bg, color: T.text }}>
-      <TopBar
-        files={files} scanning={scanning} processed={processed}
-        onImport={handleImport} setShowGitHub={setShowGitHub}
-        cloneStatus={cloneStatus}
-      />
-
-      {files.length === 0 ? (
-        <Welcome onImport={handleImport} onGitHub={() => setShowGitHub(true)} />
-      ) : (
-        <>
-          <TabBar tab={tab} setTab={setTab} selectedFile={selectedFile} />
-          <div style={S.bodyWrap}>
-            <div style={S.leftPane}><FileExplorer /></div>
-            <div style={S.centerPane}>
-              <ErrorBoundary>
-                {tab === "dashboard"    && <CodePreview unusedFiles={unusedFiles} />}
-                {tab === "architecture" && <Architecture />}
-                {tab === "search"       && <div style={{ padding: 20, flex: 1 }}><CodeSearch /></div>}
-                {tab === "lens"         && <DependencyLens />}
-                {tab === "git"          && <GitActivity />}
-                {tab === "ai"           && <AIAssistant />}
-                {tab === "onboarding"   && <Onboarding />}
-              </ErrorBoundary>
-            </div>
-            {tab === "dashboard" && (
-              <FileMetricsPanel unusedFiles={unusedFiles} onSelectUnused={selectFile} />
-            )}
-          </div>
-        </>
-      )}
-
-      {showGitHub && (
-        <GitHubImportModal
-          onClose={() => setShowGitHub(false)}
-          onImport={handleGitHubImport}
-        />
-      )}
-    </div>
-  )
-}
-
-// ── FileMetricsPanel ──────────────────────────────────────────────────────────
+// ── Right Panel (metrics + unused) ───────────────────────────────────────────
 const panelWrap = {
-  width: 220, flexShrink: 0,
+  width: 240, flexShrink: 0,
   borderLeft: `1px solid ${T.border}`,
   background: T.surface,
   display: "flex", flexDirection: "column",
@@ -307,12 +248,11 @@ const FileMetricsPanel = React.memo(function FileMetricsPanel({ unusedFiles, onS
     <div style={panelWrap}>
       <div style={panelHeader}>file metrics</div>
       <div style={{ flex: 1, overflowY: "auto", padding: "10px 14px" }}>
-        <MetricRow label="Fan-out"      value={fanOut}  valueColor={fanOut > 8  ? T.red : T.text} />
-        <MetricRow label="Fan-in"       value={fanIn}   valueColor={fanIn  > 10 ? T.red : T.text} />
-        <MetricRow label="Risk score"   value={`${riskDisp} / 10`} valueColor={riskDisp > 7 ? T.red : riskDisp > 4 ? T.orange : T.text} />
-        <MetricRow label="Depth"        value={depth}   valueColor={depth  > 5  ? T.orange : T.text} />
-        <MetricRow label="Lines"        value={lines} />
-        <MetricRow label="Last changed" value="—" />
+        <MetricRow label="Fan-out"    value={fanOut}  valueColor={fanOut > 8  ? T.red : T.text} />
+        <MetricRow label="Fan-in"     value={fanIn}   valueColor={fanIn  > 10 ? T.red : T.text} />
+        <MetricRow label="Risk score" value={`${riskDisp} / 10`} valueColor={riskDisp > 7 ? T.red : riskDisp > 4 ? T.orange : T.text} />
+        <MetricRow label="Depth"      value={depth}   valueColor={depth  > 5  ? T.orange : T.text} />
+        <MetricRow label="Lines"      value={lines} />
 
         <div style={{ marginTop: 14, marginBottom: 6 }}>
           <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textHint, fontWeight: 600, marginBottom: 8 }}>imports</div>
@@ -341,3 +281,111 @@ const FileMetricsPanel = React.memo(function FileMetricsPanel({ unusedFiles, onS
     </div>
   )
 })
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+export default function App() {
+  const { files, setFiles, selectFile, selectedFile } = useProjectStore()
+
+  const [tab,         setTab]         = React.useState("dashboard")
+  const [unusedFiles, setUnusedFiles] = React.useState([])
+  const [scanning,    setScanning]    = React.useState(false)
+  const [processed,   setProcessed]   = React.useState(0)
+  const [total,       setTotal]       = React.useState(0)
+  const [showGitHub,  setShowGitHub]  = React.useState(false)
+  const [cloneStatus, setCloneStatus] = React.useState(null)
+
+  React.useEffect(() => {
+    onScanProgress((p) => {
+      setScanning(true)
+      setProcessed(p.processed || 0)
+      if (p.total) setTotal(p.total)
+    })
+    return () => {}
+  }, [])
+
+  React.useEffect(() => {
+    if (!window.electronAPI?.onCloneProgress) return
+    window.electronAPI.onCloneProgress((data) => setCloneStatus(data))
+  }, [])
+
+  const handleImport = React.useCallback(async () => {
+    setScanning(true)
+    setProcessed(0)
+    setTotal(0)
+    const result = await importProject()
+    if (result) {
+      setFiles(result)
+      buildIndex(result)
+      setUnusedFiles(findUnusedFiles(result))
+      setTab("dashboard")
+    }
+    setScanning(false)
+  }, [setFiles])
+
+  const handleGitHubImport = React.useCallback((result) => {
+    if (result) {
+      setFiles(result)
+      buildIndex(result)
+      setUnusedFiles(findUnusedFiles(result))
+      setTab("dashboard")
+    }
+    setShowGitHub(false)
+    setCloneStatus(null)
+  }, [setFiles])
+
+  return (
+    <div style={{ ...S.root, background: T.bg, color: T.text }}>
+      <TopBar
+        files={files} scanning={scanning} processed={processed}
+        onImport={handleImport} setShowGitHub={setShowGitHub}
+        cloneStatus={cloneStatus}
+      />
+
+      {/* Scan progress bar — shown during scanning */}
+      <ScanProgressBar scanning={scanning} processed={processed} total={total} />
+
+      {files.length === 0 ? (
+        <Welcome onImport={handleImport} onGitHub={() => setShowGitHub(true)} />
+      ) : (
+        <>
+          <TabBar tab={tab} setTab={setTab} selectedFile={selectedFile} />
+
+          {/* Dashboard stats strip */}
+          {tab === "dashboard" && (
+            <div style={{
+              padding: "10px 16px", borderBottom: `1px solid ${T.border}`,
+              background: T.surface, flexShrink: 0,
+            }}>
+              <StatsCards />
+            </div>
+          )}
+
+          <div style={S.bodyWrap}>
+            <div style={S.leftPane}><FileExplorer /></div>
+            <div style={S.centerPane}>
+              <ErrorBoundary>
+                {tab === "dashboard"    && <CodePreview unusedFiles={unusedFiles} />}
+                {tab === "architecture" && <Architecture />}
+                {tab === "search"       && <div style={{ padding: 20, flex: 1 }}><CodeSearch /></div>}
+                {tab === "lens"         && <DependencyLens />}
+                {tab === "git"          && <GitActivity />}
+                {tab === "ai"           && <AIAssistant />}
+                {tab === "onboarding"   && <Onboarding />}
+              </ErrorBoundary>
+            </div>
+            {tab === "dashboard" && (
+              <FileMetricsPanel unusedFiles={unusedFiles} onSelectUnused={selectFile} />
+            )}
+          </div>
+        </>
+      )}
+
+      {showGitHub && (
+        <GitHubImportModal
+          onClose={() => setShowGitHub(false)}
+          onImport={handleGitHubImport}
+        />
+      )}
+    </div>
+  )
+}

@@ -110,10 +110,10 @@ export default function FileExplorer() {
           return (
             <div key={folder}>
               <FolderRow name={folder} depth={0} expanded={isOpen} onClick={() => toggleFolder(folder)} />
-              {isOpen && folderFiles.map(file => {
+              {isOpen && folderFiles.map((file, idx) => {
                 const depth = Math.max(1, file.path.replace(/\\/g, "/").split("/").length - 2)
                 return (
-                  <FileRow key={file.path} file={file} depth={depth} isSelected={selectedFile?.path === file.path} onClick={() => selectFile(file)} />
+                  <FileRow key={`${file.path}-${idx}`} file={file} depth={depth} isSelected={selectedFile?.path === file.path} onClick={() => selectFile(file)} />
                 )
               })}
             </div>

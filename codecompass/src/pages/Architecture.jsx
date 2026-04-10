@@ -1,5 +1,6 @@
 import React from "react"
 import ModuleGraph from "../components/ModuleGraph"
+import GraphSearch from "../components/GraphSearch"
 import { useProjectStore } from "../state/projectStore"
 import { findCycles } from "../services/cycleService"
 import { T } from "../theme"
@@ -9,6 +10,95 @@ const stressColor = s => s > 20 ? T.red : s > 10 ? T.orange : T.green
 const extColor = p => ({ tsx:T.teal,ts:T.blue,jsx:T.teal,js:T.orange,css:"#8b5cf6",json:T.green }[(p||"").match(/\.(\w+)$/)?.[1]]||T.textHint)
 const fileName  = p => (p||"").replace(/\\/g,"/").split("/").pop()
 const isExt     = i => !i.startsWith(".") && !i.startsWith("/")
+
+// ── Coupling Health Panel ─────────────────────────────────────────────────────
+function CouplingHealthPanel({ files }) {
+  const results = React.useMemo(() => {
+    if (!files.length) return []
+    // Inline coupling analysis (mirrors server/analyzer/couplinganalyzer.js)
+    const fanInMap = {}
+    for (const f of files) {
+      for (const imp of f.imports || []) {
+        const key = imp.replace(/\\/g,"/").split("/").pop().replace(/\.[^.]+$/,"")
+        fanInMap[key] = (fanInMap[key]||0)+1
+      }
+    }
+    return files.map(f => {
+      const name   = f.path.replace(/\\/g,"/").split("/").pop().replace(/\.[^.]+$/,"")
+      const fanOut = (f.imports||[]).length
+      const fanIn  = fanInMap[name]||0
+      const score  = Math.round(fanOut*1.5 + fanIn*2)
+      const risk   = score>20?"critical":score>12?"high":score>6?"medium":"low"
+      return { path:f.path, fanIn, fanOut, score, risk }
+    }).sort((a,b)=>b.score-a.score).slice(0,8)
+  }, [files])
+
+  const riskColor = { critical:T.red, high:T.orange, medium:T.amber, low:T.green }
+  const riskBg    = { critical:T.redLight, high:T.orangeLight, medium:T.amberLight, low:T.greenLight }
+  const riskBd    = { critical:T.redBorder, high:T.orangeBorder, medium:T.amberBorder, low:T.greenBorder }
+
+  if (!results.length) return null
+
+  return (
+    <div style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:T.rMd, overflow:"hidden", flexShrink:0 }}>
+      <div style={{ padding:"10px 14px", borderBottom:`1px solid ${T.border}`, background:T.surfaceAlt, display:"flex", alignItems:"center", gap:8 }}>
+        <span style={{ fontSize:13 }}>⚡</span>
+        <span style={{ fontSize:13, fontWeight:700, color:T.text, fontFamily:"monospace" }}>Coupling Analyzer</span>
+        <span style={{ fontSize:10, color:T.textHint, fontFamily:"monospace" }}>top coupled modules</span>
+      </div>
+      <div style={{ padding:"10px 14px", display:"flex", flexDirection:"column", gap:5 }}>
+        {results.map((r,i) => (
+          <div key={i} style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ fontSize:9, fontFamily:"monospace", color:T.textHint, width:14, flexShrink:0 }}>{i+1}</span>
+            <div style={{ flex:1, minWidth:0 }}>
+              <span style={{ fontSize:10, color:T.text, fontFamily:"monospace", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"block" }}>
+                {fileName(r.path)}
+              </span>
+            </div>
+            <div style={{ display:"flex", gap:4, flexShrink:0 }}>
+              <span style={{ fontSize:9, color:T.textHint, fontFamily:"monospace" }}>↑{r.fanIn} ↓{r.fanOut}</span>
+              <span style={{
+                fontSize:9, fontWeight:700, fontFamily:"monospace", padding:"1px 6px", borderRadius:3,
+                background:riskBg[r.risk], border:`1px solid ${riskBd[r.risk]}`, color:riskColor[r.risk],
+              }}>{r.risk}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Export helpers ─────────────────────────────────────────────────────────────
+function exportSVG(svgEl) {
+  if (!svgEl) return
+  const clone = svgEl.cloneNode(true)
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg")
+  const blob = new Blob([clone.outerHTML], { type: "image/svg+xml" })
+  const url  = URL.createObjectURL(blob)
+  const a    = Object.assign(document.createElement("a"), { href: url, download: "architecture.svg" })
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportPNG(svgEl) {
+  if (!svgEl) return
+  const { width, height } = svgEl.getBoundingClientRect()
+  const clone = svgEl.cloneNode(true)
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg")
+  const svgStr = new XMLSerializer().serializeToString(clone)
+  const img    = new Image()
+  img.onload   = () => {
+    const canvas = Object.assign(document.createElement("canvas"), { width, height })
+    const ctx    = canvas.getContext("2d")
+    ctx.fillStyle = "#0e1117"
+    ctx.fillRect(0, 0, width, height)
+    ctx.drawImage(img, 0, 0)
+    const a = Object.assign(document.createElement("a"), { href: canvas.toDataURL("image/png"), download: "architecture.png" })
+    a.click()
+  }
+  img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgStr)))
+}
 
 // ── Shared sub-components ─────────────────────────────────────────────────────
 const Label = ({ children }) => (
@@ -54,7 +144,7 @@ function Legend() {
 }
 
 // ── Controls ──────────────────────────────────────────────────────────────────
-function Controls({ showCycles, setShowCycles, showUnused, setShowUnused, onReset }) {
+function Controls({ showCycles, setShowCycles, showUnused, setShowUnused, onReset, onExportSVG, onExportPNG }) {
   const chip = (active, color, label, onClick) => (
     <button onClick={onClick} style={{ padding:"5px 12px", borderRadius:5, border:"1px solid", borderColor:active?`${color}55`:T.border, background:active?`${color}14`:"transparent", color:active?color:T.textHint, fontSize:10, fontFamily:"monospace", cursor:"pointer" }}>
       {active?"● ":"○ "}{label}
@@ -65,25 +155,33 @@ function Controls({ showCycles, setShowCycles, showUnused, setShowUnused, onRese
       <Label>Filters</Label>
       {chip(showCycles, T.red,    "Highlight Cycles", () => setShowCycles(v=>!v))}
       {chip(showUnused, "#8b5cf6","Show Unused",      () => setShowUnused(v=>!v))}
-      <button onClick={onReset} style={{ padding:"5px 12px", borderRadius:5, border:`1px solid ${T.border}`, background:"transparent", color:T.textHint, fontSize:10, fontFamily:"monospace", cursor:"pointer", marginLeft:"auto" }}>
-        ↺ Reset View
-      </button>
+      <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
+        <button onClick={onExportPNG} style={{ padding:"5px 12px", borderRadius:5, border:`1px solid ${T.border}`, background:"transparent", color:T.textHint, fontSize:10, fontFamily:"monospace", cursor:"pointer" }}>
+          ↓ PNG
+        </button>
+        <button onClick={onExportSVG} style={{ padding:"5px 12px", borderRadius:5, border:`1px solid ${T.border}`, background:"transparent", color:T.textHint, fontSize:10, fontFamily:"monospace", cursor:"pointer" }}>
+          ↓ SVG
+        </button>
+        <button onClick={onReset} style={{ padding:"5px 12px", borderRadius:5, border:`1px solid ${T.border}`, background:"transparent", color:T.textHint, fontSize:10, fontFamily:"monospace", cursor:"pointer" }}>
+          ↺ Reset
+        </button>
+      </div>
     </div>
   )
 }
 
 // ── Node Detail Panel ──────────────────────────────────────────────────────────
-function NodeDetailPanel({ file, files, onClose }) {
+function NodeDetailPanel({ file, files, onClose, onOpenInSearch }) {
   if (!file) return null
-  const meta    = file._meta || {}
-  const score   = meta.stressScore || 0
-  const color   = stressColor(score)
-  const ec      = extColor(file.path)
-  const ext     = file.path.match(/\.(\w+)$/)?.[1] || "?"
-  const imports = file.imports || []
-  const local   = imports.filter(i => !isExt(i))
-  const external= imports.filter(isExt)
-  const usedBy  = files.filter(f => f.path !== file.path && (f.imports||[]).some(imp => imp.includes(fileName(file.path).replace(/\.(tsx|ts|jsx|js)$/,""))))
+  const meta     = file._meta || {}
+  const score    = meta.stressScore || 0
+  const color    = stressColor(score)
+  const ec       = extColor(file.path)
+  const ext      = file.path.match(/\.(\w+)$/)?.[1] || "?"
+  const imports  = file.imports || []
+  const local    = imports.filter(i => !isExt(i))
+  const external = imports.filter(isExt)
+  const usedBy   = files.filter(f => f.path !== file.path && (f.imports||[]).some(imp => imp.includes(fileName(file.path).replace(/\.(tsx|ts|jsx|js)$/,""))))
 
   const insights = []
   if      (score > 20)       insights.push({ icon:"🔴", text:"Critical stress — refactoring priority",           color:T.red    })
@@ -151,6 +249,21 @@ function NodeDetailPanel({ file, files, onClose }) {
             { label:"Lines",    value:file.lines||"—", color:T.text   },
             { label:"Incoming", value:meta.incoming||0,color:T.blue   },
           ])}
+        </div>
+
+        {/* Open in search */}
+        <div style={{ padding:"0 12px 10px" }}>
+          <button
+            onClick={() => onOpenInSearch && onOpenInSearch(file)}
+            style={{
+              width:"100%", padding:"7px 10px",
+              background:T.tealLight, border:`1px solid ${T.tealBorder}`,
+              borderRadius:T.r, color:T.teal, fontSize:10,
+              fontFamily:"monospace", cursor:"pointer", fontWeight:600,
+            }}
+          >
+            ⎘ Open in Code Preview
+          </button>
         </div>
 
         {/* Insights */}
@@ -260,16 +373,19 @@ function CycleDetectorPanel({ files, onHighlightCycle }) {
 }
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
-export default function Architecture() {
+export default function Architecture({ onOpenFile }) {
   const { files, selectedFile, selectFile } = useProjectStore()
   const [showCycles, setShowCycles] = React.useState(true)
   const [showUnused, setShowUnused] = React.useState(false)
   const [resetKey,   setResetKey]   = React.useState(0)
   const [activeCycle,setActiveCycle]= React.useState(null)
+  const svgRef = React.useRef(null)
 
-  // FIX: was `useProjectStore.getState().selectFile(null)` called inline inside JSX —
-  // calling store methods directly in JSX can cause issues. Use the bound selectFile from the hook.
-  const handleCloseDetail = React.useCallback(() => selectFile(null), [selectFile])
+  const handleCloseDetail  = React.useCallback(() => selectFile(null), [selectFile])
+  const handleOpenInSearch = React.useCallback((file) => {
+    selectFile(file)
+    onOpenFile && onOpenFile(file)
+  }, [selectFile, onOpenFile])
 
   const totalDeps    = files.reduce((a,f)=>a+(f.imports?.length||0),0)
   const highCoupling = files.filter(f=>(f._meta?.stressScore||0)>20).length
@@ -292,17 +408,33 @@ export default function Architecture() {
         <StatCard label="Unused Files"   value={unusedCount}   color={T.orange} sub="zero fan-in" />
       </div>
 
+      {/* Graph Search — wired here (task 10) */}
+      <GraphSearch />
+
       <Legend />
-      <Controls showCycles={showCycles} setShowCycles={setShowCycles} showUnused={showUnused} setShowUnused={setShowUnused} onReset={()=>{setResetKey(k=>k+1);setActiveCycle(null)}} />
+      <Controls
+        showCycles={showCycles} setShowCycles={setShowCycles}
+        showUnused={showUnused} setShowUnused={setShowUnused}
+        onReset={() => { setResetKey(k=>k+1); setActiveCycle(null) }}
+        onExportSVG={() => exportSVG(svgRef.current)}
+        onExportPNG={() => exportPNG(svgRef.current)}
+      />
 
       <div style={{ display:"flex",gap:10,overflow:"hidden",minHeight:460,flexShrink:0 }}>
         <div style={{ flex:1,background:T.surfaceAlt,border:`1px solid ${T.border}`,borderRadius:T.rMd,overflow:"hidden",display:"flex",flexDirection:"column" }}>
-          <ModuleGraph key={resetKey} width={selectedFile?760:1060} height={460} activeCycle={activeCycle} />
+          <ModuleGraph key={resetKey} svgRef={svgRef} width={selectedFile?760:1060} height={460} activeCycle={activeCycle} />
         </div>
         {selectedFile && (
-          <NodeDetailPanel file={selectedFile} files={files} onClose={handleCloseDetail} />
+          <NodeDetailPanel
+            file={selectedFile} files={files}
+            onClose={handleCloseDetail}
+            onOpenInSearch={handleOpenInSearch}
+          />
         )}
       </div>
+
+      {/* Coupling analyzer panel (task 11) */}
+      <CouplingHealthPanel files={files} />
 
       <CycleDetectorPanel files={files} onHighlightCycle={setActiveCycle} />
     </div>

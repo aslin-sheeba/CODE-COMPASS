@@ -46,7 +46,7 @@ function GraphSearch() {
 
 const nodeColor = s => s > 20 ? T.red : s > 10 ? T.orange : T.green
 
-export default function ModuleGraph({ width = 1000, height = 600, activeCycle }) {
+export default function ModuleGraph({ width = 1000, height = 600, activeCycle, svgRef }) {
   const { files, selectFile, highlightedFile } = useProjectStore()
   const simRef = useRef()
   const rafRef = useRef()
@@ -183,7 +183,7 @@ export default function ModuleGraph({ width = 1000, height = 600, activeCycle })
     <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: T.surfaceAlt }}>
       <div style={{ flexShrink: 0 }}><GraphSearch /></div>
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-        <svg width={width} height={height} onWheel={onWheel} onMouseDown={onPanStart}
+        <svg ref={svgRef} width={width} height={height} onWheel={onWheel} onMouseDown={onPanStart}
           style={{ background: T.surfaceAlt, cursor: "grab", display: "block" }}>
           <defs>
             <marker id="arr"       markerWidth="6" markerHeight="6" refX="4" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 Z" fill={T.borderHover} /></marker>
