@@ -4,21 +4,27 @@ import { useProjectStore } from "./state/projectStore"
 import { T } from "./theme"
 import { pillStyle, basename } from "./utils"
 
-import FileExplorer   from "./components/Dashboard/FileExplorer"
-import CodePreview    from "./components/Dashboard/CodePreview"
-import CodeSearch     from "./pages/CodeSearch"
-import DependencyLens from "./pages/DependencyLens"
-import Architecture   from "./pages/Architecture"
+import FileExplorer      from "./components/Dashboard/FileExplorer"
+import CodePreview       from "./components/Dashboard/CodePreview"
+import StatsCards        from "./components/StatsCards"
+import LanguageChart     from "./components/Dashboard/LanguageChart"
+import InsightsPanel     from "./components/InsightsPanel"
+import UnusedFilesPanel  from "./components/UnusedFilesPanel"
+import CodeSearch        from "./pages/CodeSearch"
+import DependencyLens    from "./pages/DependencyLens"
+import Architecture      from "./pages/Architecture"
 import GitHubImportModal from "./components/GitHubImportModel"
-import GitActivity    from "./pages/GitActivity"
-import AIAssistant    from "./pages/AIAssistant"
-import Onboarding     from "./pages/Onboarding"
-import ErrorBoundary  from "./components/ErrorBoundary"
+import GitActivity       from "./pages/GitActivity"
+import AIAssistant       from "./pages/AIAssistant"
+import Onboarding        from "./pages/Onboarding"
+import ErrorBoundary     from "./components/ErrorBoundary"
+
+import FileMetricsPanel   from "./components/Dashboard/FileMetricsPanel"
 
 import { buildIndex }      from "./services/searchService"
 import { findUnusedFiles } from "./services/unusedService"
 
-// ── Hoisted static styles (#15) ─────────────────────────────────────────────
+// ── Static styles ─────────────────────────────────────────────────────────────
 const S = {
   root: {
     height: "100vh", display: "flex", flexDirection: "column",
@@ -40,16 +46,41 @@ const S = {
     background: T.surface, flexShrink: 0,
     paddingLeft: 12, gap: 0, overflowX: "auto",
   },
-  bodyWrap:  { flex: 1, display: "flex", overflow: "hidden", background: T.bg },
-  leftPane:  { width: 220, flexShrink: 0, borderRight: `1px solid ${T.border}`, background: T.surface, display: "flex", flexDirection: "column", overflow: "hidden" },
-  centerPane:{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column" },
+  bodyWrap:   { flex: 1, display: "flex", overflow: "hidden", background: T.bg },
+  leftPane:   { width: 220, flexShrink: 0, borderRight: `1px solid ${T.border}`, background: T.surface, display: "flex", flexDirection: "column", overflow: "hidden" },
+  centerPane: { flex: 1, overflow: "auto", display: "flex", flexDirection: "column" },
   btnBase: {
     padding: "5px 14px", borderRadius: T.r,
     fontSize: 12, fontFamily: "monospace", cursor: "pointer",
   },
 }
 
-// ── Pill ─────────────────────────────────────────────────────────────────────
+// ── Scan progress bar ─────────────────────────────────────────────────────────
+function ScanProgressBar({ scanning, processed, total }) {
+  if (!scanning) return null
+  const pct = total ? Math.round((processed / total) * 100) : null
+
+  return (
+    <div style={{
+      height: 3, background: T.surfaceAlt, flexShrink: 0, overflow: "hidden",
+    }}>
+      <div style={{
+        height: "100%", background: T.brand,
+        width: pct != null ? `${pct}%` : "40%",
+        transition: pct != null ? "width 0.3s ease" : "none",
+        animation: pct == null ? "scanPulse 1.4s ease-in-out infinite" : "none",
+      }} />
+      <style>{`
+        @keyframes scanPulse {
+          0%   { transform: translateX(-100%); width: 40%; }
+          100% { transform: translateX(350%);  width: 40%; }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+// ── Pill ──────────────────────────────────────────────────────────────────────
 const Pill = React.memo(function Pill({ children, color = T.teal, bg = T.tealLight, border = T.tealBorder }) {
   return <span style={pillStyle({ color, bg, border })}>{children}</span>
 })
@@ -57,10 +88,15 @@ const Pill = React.memo(function Pill({ children, color = T.teal, bg = T.tealLig
 // ── TopBar ────────────────────────────────────────────────────────────────────
 const TopBar = React.memo(function TopBar({ files, scanning, processed, onImport, setShowGitHub, cloneStatus }) {
   return (
-    <div style={{ ...S.topBar, background: T.surface }}>
+    <div style={S.topBar}>
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
         <span style={S.logoText}>compass</span>
         {files.length > 0 && <Pill>{files.length} files</Pill>}
+        {scanning && (
+          <Pill color={T.brand} bg={T.brandLight} border={T.brandBorder}>
+            scanning… {processed > 0 ? `${processed}` : ""}
+          </Pill>
+        )}
         {cloneStatus && cloneStatus.phase !== "done" && (
           <Pill color={T.orange} bg={T.orangeLight} border={T.orangeBorder}>
             ⏳ {cloneStatus.message}
@@ -91,7 +127,7 @@ const TopBar = React.memo(function TopBar({ files, scanning, processed, onImport
 
 // ── TabBar ────────────────────────────────────────────────────────────────────
 const TABS_MAP = [
-  { id: "dashboard",    labelFn: (sf) => sf ? basename(sf.path) : "App.jsx" },
+  { id: "dashboard",    labelFn: (sf) => sf ? basename(sf.path) : "dashboard" },
   { id: "architecture", labelFn: () => "architecture" },
   { id: "search",       labelFn: () => "search" },
   { id: "lens",         labelFn: () => "dependency lens" },
@@ -139,7 +175,7 @@ const Welcome = React.memo(function Welcome({ onImport, onGitHub }) {
   )
 })
 
-// ── Main App ─────────────────────────────────────────────────────────────────
+// ── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
   const { files, setFiles, selectFile, selectedFile } = useProjectStore()
 
@@ -147,12 +183,17 @@ export default function App() {
   const [unusedFiles, setUnusedFiles] = React.useState([])
   const [scanning,    setScanning]    = React.useState(false)
   const [processed,   setProcessed]   = React.useState(0)
+  const [total,       setTotal]       = React.useState(0)
   const [showGitHub,  setShowGitHub]  = React.useState(false)
   const [cloneStatus, setCloneStatus] = React.useState(null)
 
-  // Cleanup effects: remove listeners on unmount (#6)
   React.useEffect(() => {
-    onScanProgress((p) => { setScanning(true); setProcessed(p.processed || 0) })
+    onScanProgress((p) => {
+      setScanning(true)
+      setProcessed(p.processed || 0)
+      if (p.total) setTotal(p.total)
+    })
+    return () => {}
   }, [])
 
   React.useEffect(() => {
@@ -162,6 +203,8 @@ export default function App() {
 
   const handleImport = React.useCallback(async () => {
     setScanning(true)
+    setProcessed(0)
+    setTotal(0)
     const result = await importProject()
     if (result) {
       setFiles(result)
@@ -191,11 +234,25 @@ export default function App() {
         cloneStatus={cloneStatus}
       />
 
+      {/* Scan progress bar — shown during scanning */}
+      <ScanProgressBar scanning={scanning} processed={processed} total={total} />
+
       {files.length === 0 ? (
         <Welcome onImport={handleImport} onGitHub={() => setShowGitHub(true)} />
       ) : (
         <>
           <TabBar tab={tab} setTab={setTab} selectedFile={selectedFile} />
+
+          {/* Dashboard stats strip */}
+          {tab === "dashboard" && (
+            <div style={{
+              padding: "10px 16px", borderBottom: `1px solid ${T.border}`,
+              background: T.surface, flexShrink: 0,
+            }}>
+              <StatsCards />
+            </div>
+          )}
+
           <div style={S.bodyWrap}>
             <div style={S.leftPane}><FileExplorer /></div>
             <div style={S.centerPane}>
@@ -225,113 +282,3 @@ export default function App() {
     </div>
   )
 }
-
-// ── FileMetricsPanel ──────────────────────────────────────────────────────────
-const panelWrap = {
-  width: 220, flexShrink: 0,
-  borderLeft: `1px solid ${T.border}`,
-  background: T.surface,
-  display: "flex", flexDirection: "column",
-  overflow: "hidden",
-}
-const panelHeader = {
-  padding: "10px 14px", borderBottom: `1px solid ${T.border}`,
-  fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em",
-  color: T.textHint, fontWeight: 600,
-}
-
-function MetricRow({ label, value, valueColor }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${T.border}` }}>
-      <span style={{ fontSize: 11, color: T.textSub }}>{label}</span>
-      <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "monospace", color: valueColor || T.text }}>{value}</span>
-    </div>
-  )
-}
-
-function DotList({ items, color }) {
-  if (!items.length) return <div style={{ fontSize: 10, color: T.textHint, padding: "4px 0" }}>none</div>
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      {items.map((item, i) => {
-        const name = typeof item === "string" ? basename(item) : basename(item.path)
-        return (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <div style={{ width: 7, height: 7, borderRadius: 2, background: color, flexShrink: 0 }} />
-            <span style={{ fontSize: 10, color: T.textSub, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-const FileMetricsPanel = React.memo(function FileMetricsPanel({ unusedFiles, onSelectUnused }) {
-  const { selectedFile, files } = useProjectStore()
-
-  if (!selectedFile) {
-    return (
-      <div style={panelWrap}>
-        <div style={panelHeader}>file metrics</div>
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: T.textHint, fontSize: 11, textAlign: "center", padding: 20 }}>
-          select a file to see metrics
-        </div>
-      </div>
-    )
-  }
-
-  const meta    = selectedFile._meta || {}
-  const imports = selectedFile.imports || []
-  const myBase  = basename(selectedFile.path).replace(/\.[^.]+$/, "")
-  const usedBy  = files.filter(f =>
-    (f.imports || []).some(imp => basename(imp).replace(/\.[^.]+$/, "") === myBase)
-  )
-
-  const fanOut   = imports.filter(i => !i.startsWith(".") && !i.startsWith("/")).length
-  const fanIn    = meta.incoming || 0
-  const risk     = meta.stressScore || 0
-  const riskDisp = Math.min(Math.round(risk / 4), 10)
-  const depth    = Math.min(imports.length, 8)
-  const lines    = selectedFile.lines || 0
-
-  const localImports = imports.filter(i => i.startsWith(".") || i.startsWith("/")).slice(0, 5)
-  const usedByList   = usedBy.slice(0, 3)
-
-  return (
-    <div style={panelWrap}>
-      <div style={panelHeader}>file metrics</div>
-      <div style={{ flex: 1, overflowY: "auto", padding: "10px 14px" }}>
-        <MetricRow label="Fan-out"      value={fanOut}  valueColor={fanOut > 8  ? T.red : T.text} />
-        <MetricRow label="Fan-in"       value={fanIn}   valueColor={fanIn  > 10 ? T.red : T.text} />
-        <MetricRow label="Risk score"   value={`${riskDisp} / 10`} valueColor={riskDisp > 7 ? T.red : riskDisp > 4 ? T.orange : T.text} />
-        <MetricRow label="Depth"        value={depth}   valueColor={depth  > 5  ? T.orange : T.text} />
-        <MetricRow label="Lines"        value={lines} />
-        <MetricRow label="Last changed" value="—" />
-
-        <div style={{ marginTop: 14, marginBottom: 6 }}>
-          <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textHint, fontWeight: 600, marginBottom: 8 }}>imports</div>
-          <DotList items={localImports} color={T.orange} />
-          {imports.length > 5 && <div style={{ fontSize: 10, color: T.textHint, marginTop: 4 }}>+{imports.length - 5} more</div>}
-        </div>
-
-        <div style={{ marginTop: 14, marginBottom: 6 }}>
-          <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textHint, fontWeight: 600, marginBottom: 8 }}>used by</div>
-          <DotList items={usedByList} color={T.teal} />
-        </div>
-
-        {unusedFiles?.length > 0 && (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: T.textHint, fontWeight: 600, marginBottom: 8 }}>unused files</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-              {unusedFiles.slice(0, 8).map((f, i) => (
-                <span key={i} onClick={() => onSelectUnused && onSelectUnused(f)} style={{ padding: "2px 8px", borderRadius: 4, background: T.pinkLight, border: `1px solid ${T.pinkBorder}`, color: T.pink, fontSize: 10, cursor: "pointer", fontFamily: "monospace" }}>
-                  {basename(f.path)}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-})

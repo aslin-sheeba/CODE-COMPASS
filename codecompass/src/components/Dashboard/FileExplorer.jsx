@@ -1,7 +1,7 @@
 import React from "react"
 import { useProjectStore } from "../../state/projectStore"
 import { T } from "../../theme"
-import { getExtColor, getStressDot, basename } from "../../utils"
+import { getStressDot, basename } from "../../utils"
 
 function groupByFolder(files) {
   const groups = {}
@@ -21,8 +21,8 @@ function groupByFolder(files) {
 
 function FileRow({ file, depth = 0, isSelected, onClick }) {
   const [hov, setHov] = React.useState(false)
-  const name  = basename(file.path)
-  const dot   = getStressDot(file._meta?.stressScore || 0)
+  const name = basename(file.path)
+  const dot  = getStressDot(file._meta?.stressScore || 0)
 
   return (
     <div
@@ -92,7 +92,6 @@ export default function FileExplorer() {
   )
 
   const { groups, roots } = groupByFolder(files)
-
   const toggleFolder = (key) => setExpanded(e => ({ ...e, [key]: !e[key] }))
 
   return (
@@ -111,10 +110,10 @@ export default function FileExplorer() {
           return (
             <div key={folder}>
               <FolderRow name={folder} depth={0} expanded={isOpen} onClick={() => toggleFolder(folder)} />
-              {isOpen && folderFiles.map(file => {
+              {isOpen && folderFiles.map((file, idx) => {
                 const depth = Math.max(1, file.path.replace(/\\/g, "/").split("/").length - 2)
                 return (
-                  <FileRow key={file.path} file={file} depth={depth} isSelected={selectedFile?.path === file.path} onClick={() => selectFile(file)} />
+                  <FileRow key={`${file.path}-${idx}`} file={file} depth={depth} isSelected={selectedFile?.path === file.path} onClick={() => selectFile(file)} />
                 )
               })}
             </div>
@@ -124,3 +123,4 @@ export default function FileExplorer() {
     </div>
   )
 }
+

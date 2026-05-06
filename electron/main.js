@@ -1,6 +1,13 @@
+// electron/main.js
 const { app, BrowserWindow } = require("electron")
 const path = require("path")
+
+// projectIPC registers ALL handlers:
+//   project:select, github:get-branches, github:clone,
+//   file:write, git:data, git:diff, git:status, git:commit-push, git:open-vscode
+// Do NOT require gitIPC here — it would re-register the same channels and crash.
 require("./ipc/projectIPC")
+
 let mainWindow
 
 function createWindow() {

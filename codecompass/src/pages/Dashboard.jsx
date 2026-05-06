@@ -1,114 +1,96 @@
 import React from "react"
 import { useProjectStore } from "../state/projectStore"
+import { T } from "../theme"
+import StatsCards      from "../components/StatsCards"
+import LanguageChart   from "../components/Dashboard/LanguageChart"
+import InsightsPanel   from "../components/InsightsPanel"
+import UnusedFilesPanel from "../components/UnusedFilesPanel"
+import FileExplorer    from "../components/Dashboard/FileExplorer"
+import CodePreview     from "../components/Dashboard/CodePreview"
 
-export default function DependencyLens() {
-  const { files, selectedFile } = useProjectStore()
+export default function Dashboard({ unusedFiles = [] }) {
+  const { files, selectFile } = useProjectStore()
+  const [showInsights, setShowInsights] = React.useState(true)
 
-  // 🚫 No file selected
-  if (!selectedFile) {
-    return (
-      <div style={{ padding: 20 }}>
-        <h2>🔍 Dependency Lens</h2>
-        <p>Select a file from Explorer or Graph</p>
-      </div>
-    )
-  }
-
-  // ✅ SAFE PATH HELPER
-  const getName = (path) =>
-    (path || "").split(/[/\\]/).pop()
-
-  // ✅ FAN OUT (imports)
-  const fanOut = selectedFile.imports || []
-
-  // ✅ FAN IN (who uses this file)
-  const fanIn = files.filter(f =>
-    (f.imports || []).some(imp =>
-      imp.includes(selectedFile.path)
-    )
-  )
-
-  // 🧠 INSIGHTS
-  const insights = []
-
-  if (fanOut.length > 5)
-    insights.push("⚠️ High coupling (too many imports)")
-
-  if (fanIn.length === 0)
-    insights.push("⚠️ Possibly unused file")
-
-  if (fanIn.length > 3)
-    insights.push("🔥 Core module (used in many places)")
+  if (!files.length) return null
 
   return (
-    <div style={{ padding: 20 }}>
-      <h2>🔍 Dependency Lens</h2>
-
-      {/* MAIN VIEW */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          marginTop: 20
-        }}
-      >
-
-        {/* LEFT → FAN IN */}
-        <div style={{ width: "30%" }}>
-          <h3>⬅️ Used By</h3>
-          {fanIn.length === 0 ? (
-            <p>No files use this</p>
-          ) : (
-            fanIn.map((f, i) => (
-              <div key={f.path || i}>
-                {getName(f.path)}
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* CENTER → SELECTED FILE */}
-        <div
-          style={{
-            width: "30%",
-            textAlign: "center",
-            padding: 20,
-            background: "#1f2937",
-            color: "white",
-            borderRadius: 10,
-            fontWeight: "bold"
-          }}
-        >
-          {getName(selectedFile.path)}
-        </div>
-
-        {/* RIGHT → FAN OUT */}
-        <div style={{ width: "30%" }}>
-          <h3>➡️ Imports</h3>
-          {fanOut.length === 0 ? (
-            <p>No imports</p>
-          ) : (
-            fanOut.map((imp, i) => (
-              <div key={i}>
-                {getName(imp)}
-              </div>
-            ))
-          )}
-        </div>
-
+    <div style={{
+      height: "100%", display: "flex", flexDirection: "column",
+      background: T.bg, overflow: "hidden",
+    }}>
+      {/* Top stats row */}
+      <div style={{
+        padding: "12px 16px", borderBottom: `1px solid ${T.border}`,
+        background: T.surface, flexShrink: 0,
+      }}>
+        <StatsCards />
       </div>
 
-      {/* INSIGHTS */}
-      <div style={{ marginTop: 30 }}>
-        <h3>🧠 Insights</h3>
+      {/* Main body */}
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        {/* Left: file explorer */}
+        <div style={{
+          width: 220, flexShrink: 0,
+          borderRight: `1px solid ${T.border}`,
+          background: T.surface,
+          display: "flex", flexDirection: "column", overflow: "hidden",
+        }}>
+          <FileExplorer />
+        </div>
 
-        {insights.length === 0 ? (
-          <p>No issues detected</p>
-        ) : (
-          insights.map((i, idx) => (
-            <div key={idx}>{i}</div>
-          ))
-        )}
+        {/* Center: code preview + language chart */}
+        <div style={{
+          flex: 1, display: "flex", flexDirection: "column",
+          overflow: "hidden",
+        }}>
+          <div style={{ flex: 1, overflow: "auto" }}>
+            <CodePreview unusedFiles={unusedFiles} />
+          </div>
+
+          {/* Language chart strip */}
+          {files.length > 0 && (
+            <div style={{
+              flexShrink: 0, borderTop: `1px solid ${T.border}`,
+              padding: "10px 16px", background: T.surface,
+            }}>
+              <LanguageChart files={files} />
+            </div>
+          )}
+        </div>
+
+        {/* Right: insights + unused */}
+        <div style={{
+          width: 240, flexShrink: 0, display: "flex", flexDirection: "column",
+          borderLeft: `1px solid ${T.border}`, overflow: "hidden",
+        }}>
+          {/* Insights toggle header */}
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "8px 12px", borderBottom: `1px solid ${T.border}`,
+            background: T.surfaceAlt, flexShrink: 0, cursor: "pointer",
+          }} onClick={() => setShowInsights(v => !v)}>
+            <span style={{
+              fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em",
+              color: T.textHint, fontWeight: 600,
+            }}>Right Panel</span>
+            <span style={{ fontSize: 11, color: T.textHint }}>{showInsights ? "▼" : "▶"}</span>
+          </div>
+
+          {showInsights && (
+            <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 0 }}>
+              <InsightsPanel />
+              {unusedFiles.length > 0 && (
+                <div style={{ padding: 12 }}>
+                  <UnusedFilesPanel
+                    files={unusedFiles.slice(0, 12)}
+                    onSelect={selectFile}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

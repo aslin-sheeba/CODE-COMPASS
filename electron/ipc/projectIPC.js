@@ -3,7 +3,13 @@ const path = require("path")
 const { fork, spawn } = require("child_process")
 const os = require("os")
 const fs = require("fs")
-const simpleGit = require("simple-git")
+
+// simple-git is lazy-required inside each handler that needs it.
+// This way, if simple-git is missing, only the git handlers fail —
+// project:select and all other handlers still register and work fine.
+function getSimpleGit() {
+  return require("simple-git")
+}
 
 // ─── HELPER: send clone progress to renderer ─────────────────────────────────
 function sendProgress(win, message, phase) {
@@ -62,16 +68,22 @@ ipcMain.handle("github:get-branches", async (_event, { repoUrl, token }) => {
   try {
     let owner, repo
     const shorthand = repoUrl.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/)
-    const urlMatch = repoUrl.match(/github\.com[/:]+([^/]+)\/([^/\s.]+?)(?:\.git)?$/)
-    if (shorthand) { owner = shorthand[1]; repo = shorthand[2] }
-    else if (urlMatch) { owner = urlMatch[1]; repo = urlMatch[2] }
+    const urlMatch  = repoUrl.match(/github\.com[/:]+([^/]+)\/([^/\s.]+?)(?:\.git)?$/)
+    if (shorthand)     { owner = shorthand[1]; repo = shorthand[2] }
+    else if (urlMatch) { owner = urlMatch[1];  repo = urlMatch[2]  }
     else return { error: "Invalid GitHub URL." }
+
     const headers = { "User-Agent": "CodeCompass" }
     if (token) headers["Authorization"] = `token ${token}`
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches`, { headers })
+
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/branches`,
+      { headers }
+    )
     if (res.status === 404) return { error: "Repository not found." }
     if (res.status === 401) return { error: "Authentication failed." }
-    if (!res.ok) return { error: `GitHub API error: ${res.status}` }
+    if (!res.ok)            return { error: `GitHub API error: ${res.status}` }
+
     const data = await res.json()
     return { branches: data.map(b => b.name), owner, repo }
   } catch (err) {
@@ -83,25 +95,30 @@ ipcMain.handle("github:get-branches", async (_event, { repoUrl, token }) => {
 ipcMain.handle("github:clone", async (_event, { repoUrl, branch, token }) => {
   const win = BrowserWindow.getAllWindows()[0]
   try {
+    const simpleGit = getSimpleGit()
     let cloneUrl = repoUrl
     const shorthand = repoUrl.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/)
     if (shorthand) cloneUrl = `https://github.com/${shorthand[1]}/${shorthand[2]}.git`
     if (token) cloneUrl = cloneUrl.replace("https://", `https://${token}@`)
+
     const repoName = cloneUrl.match(/([^/]+?)(?:\.git)?$/)?.[1] || "repo"
     const cloneDir = path.join(os.tmpdir(), `codecompass-${repoName}-${Date.now()}`)
     fs.mkdirSync(cloneDir, { recursive: true })
+
     sendProgress(win, `Cloning ${repoName}...`, "cloning")
     await simpleGit().clone(cloneUrl, cloneDir, ["--branch", branch, "--depth", "1"])
+
     sendProgress(win, "Scanning project files...", "scanning")
     const files = await runScanner(cloneDir, win)
     if (!files) return { error: "Failed to scan the cloned repository." }
+
     sendProgress(win, "Done!", "done")
     return { files, cloneDir }
   } catch (err) {
     const msg = err.message || String(err)
-    if (msg.includes("not found")) return { error: "Repository not found." }
+    if (msg.includes("not found"))                  return { error: "Repository not found." }
     if (msg.includes("auth") || msg.includes("403")) return { error: "Authentication failed." }
-    if (msg.includes("ENOTFOUND")) return { error: "Network error." }
+    if (msg.includes("ENOTFOUND"))                  return { error: "Network error." }
     return { error: `Clone failed: ${msg}` }
   }
 })
@@ -117,16 +134,17 @@ ipcMain.handle("file:write", async (_event, { filePath, newContent }) => {
   }
 })
 
-// ─── IPC: git:data — full git stats for a project directory ──────────────────
+// ─── IPC: git:data ────────────────────────────────────────────────────────────
 ipcMain.handle("git:data", async (_event, projectPath) => {
   try {
+    const simpleGit = getSimpleGit()
     const gitRoot = findGitRoot(projectPath)
     if (!gitRoot) return null
     const git = simpleGit(gitRoot)
     const isRepo = await git.checkIsRepo().catch(() => false)
     if (!isRepo) return null
 
-    const logResult = await git.log(["--max-count=100", "--stat"])
+    const logResult  = await git.log(["--max-count=100", "--stat"])
     const rawCommits = logResult.all || []
 
     let activeBranch = "main"
@@ -161,12 +179,14 @@ ipcMain.handle("git:data", async (_event, projectPath) => {
     }
     const contributors = Object.values(contribMap).sort((a, b) => b.commits - a.commits)
     const totalCommits = contributors.reduce((s, c) => s + c.commits, 0)
-    contributors.forEach(c => { c.pct = totalCommits ? Math.round(c.commits / totalCommits * 100) : 0 })
+    contributors.forEach(c => {
+      c.pct = totalCommits ? Math.round(c.commits / totalCommits * 100) : 0
+    })
 
     const heatmap = new Array(26 * 7).fill(0)
     const now = Date.now()
     for (const c of commits) {
-      const msAgo = now - new Date(c.date).getTime()
+      const msAgo   = now - new Date(c.date).getTime()
       const daysAgo = Math.floor(msAgo / 86400000)
       if (daysAgo < 182) {
         const idx = 181 - daysAgo
@@ -185,18 +205,22 @@ ipcMain.handle("git:data", async (_event, projectPath) => {
           const dels = parseInt(parts[1]) || 0
           const file = parts[2]
           if (!file || file.includes("=>")) continue
-          if (!fileChurnMap[file]) fileChurnMap[file] = { file, additions: 0, deletions: 0, commits: 0 }
+          if (!fileChurnMap[file])
+            fileChurnMap[file] = { file, additions: 0, deletions: 0, commits: 0 }
           fileChurnMap[file].additions += adds
           fileChurnMap[file].deletions += dels
           fileChurnMap[file].commits++
         }
       }
     } catch (_) {}
+
     const churnFiles = Object.values(fileChurnMap)
       .sort((a, b) => (b.additions + b.deletions) - (a.additions + a.deletions))
       .slice(0, 10)
 
-    const thisWeek = commits.filter(c => (now - new Date(c.date).getTime()) < 7 * 86400000).length
+    const thisWeek = commits.filter(
+      c => (now - new Date(c.date).getTime()) < 7 * 86400000
+    ).length
 
     const stats = {
       totalCommits: commits.length,
@@ -216,12 +240,13 @@ ipcMain.handle("git:data", async (_event, projectPath) => {
   }
 })
 
-// ─── IPC: git:diff — get diff for a specific commit ──────────────────────────
+// ─── IPC: git:diff ────────────────────────────────────────────────────────────
 ipcMain.handle("git:diff", async (_event, { projectPath, commitHash }) => {
   try {
+    const simpleGit = getSimpleGit()
     const gitRoot = findGitRoot(projectPath)
     if (!gitRoot) return { error: "Not a git repository" }
-    const git = simpleGit(gitRoot)
+    const git  = simpleGit(gitRoot)
     const diff = await git.show([commitHash, "--stat", "--name-status"])
     return { diff }
   } catch (err) {
@@ -229,19 +254,20 @@ ipcMain.handle("git:diff", async (_event, { projectPath, commitHash }) => {
   }
 })
 
-// ─── IPC: git:status — get working tree status ───────────────────────────────
+// ─── IPC: git:status ──────────────────────────────────────────────────────────
 ipcMain.handle("git:status", async (_event, projectPath) => {
   try {
+    const simpleGit = getSimpleGit()
     const gitRoot = findGitRoot(projectPath)
     if (!gitRoot) return { error: "Not a git repository" }
-    const git = simpleGit(gitRoot)
+    const git    = simpleGit(gitRoot)
     const status = await git.status()
     return {
-      branch:   status.current || "main",
-      modified: status.modified || [],
+      branch:   status.current   || "main",
+      modified: status.modified  || [],
       added:    status.not_added || [],
-      deleted:  status.deleted  || [],
-      staged:   status.staged   || [],
+      deleted:  status.deleted   || [],
+      staged:   status.staged    || [],
       isClean:  status.isClean(),
     }
   } catch (err) {
@@ -249,9 +275,10 @@ ipcMain.handle("git:status", async (_event, projectPath) => {
   }
 })
 
-// ─── IPC: git:commit-push — stage all, commit, and push ──────────────────────
+// ─── IPC: git:commit-push ─────────────────────────────────────────────────────
 ipcMain.handle("git:commit-push", async (_event, { projectPath, message, push }) => {
   try {
+    const simpleGit = getSimpleGit()
     const gitRoot = findGitRoot(projectPath)
     if (!gitRoot) return { error: "Not a git repository" }
     const git = simpleGit(gitRoot)
@@ -268,7 +295,7 @@ ipcMain.handle("git:commit-push", async (_event, { projectPath, message, push })
   }
 })
 
-// ─── IPC: git:open-vscode — open project in VS Code ─────────────────────────
+// ─── IPC: git:open-vscode ─────────────────────────────────────────────────────
 ipcMain.handle("git:open-vscode", async (_event, projectPath) => {
   try {
     const gitRoot = findGitRoot(projectPath) || projectPath

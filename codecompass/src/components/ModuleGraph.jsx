@@ -46,10 +46,11 @@ function GraphSearch() {
 
 const nodeColor = s => s > 20 ? T.red : s > 10 ? T.orange : T.green
 
-export default function ModuleGraph({ width = 1000, height = 600, activeCycle }) {
+export default function ModuleGraph({ width = 1000, height = 600, activeCycle, svgRef }) {
   const { files, selectFile, highlightedFile } = useProjectStore()
   const simRef = useRef()
-  const rafRef = useRef()         // track RAF id for cancellation (#3)
+  const rafRef = useRef()
+  const panRef = useRef(null) // FIX: track last pan position for correct delta
 
   const [nodes,       setNodes]       = useState([])
   const [links,       setLinks]       = useState([])
@@ -78,7 +79,7 @@ export default function ModuleGraph({ width = 1000, height = 600, activeCycle })
     })
     setNodes(n); setLinks(l)
 
-    // Cycle detection with proper visited + stackSet (#2 reuse)
+    // Cycle detection
     const visited = new Set(), stackSet = new Set(), edges = new Set()
     const dfs = id => {
       if (stackSet.has(id)) return true
@@ -91,7 +92,7 @@ export default function ModuleGraph({ width = 1000, height = 600, activeCycle })
     setCycleEdges(edges)
   }, [files])
 
-  // Simulation — RAF stops when alpha is low (#3)
+  // Simulation
   useEffect(() => {
     if (!nodes.length) return
     const groups = {}
@@ -109,7 +110,6 @@ export default function ModuleGraph({ width = 1000, height = 600, activeCycle })
 
     const render = () => {
       setNodes(prev => [...prev])
-      // Only keep ticking while simulation is still active
       if (sim.alpha() > sim.alphaMin()) {
         rafRef.current = requestAnimationFrame(render)
       }
@@ -150,24 +150,40 @@ export default function ModuleGraph({ width = 1000, height = 600, activeCycle })
     }
   }
 
+  // FIX: was `const k = Math.max(0.3, Math.min(3, 1))` — always returned 1, zoom was broken
   const onWheel = useCallback(e => {
     e.preventDefault()
-    const k = Math.max(0.3, Math.min(3, 1))
-    setTransform(t => ({ ...t, k: Math.max(0.3, Math.min(3, t.k - e.deltaY * 0.001)) }))
+    setTransform(t => ({
+      ...t,
+      k: Math.max(0.3, Math.min(3, t.k - e.deltaY * 0.001))
+    }))
   }, [])
 
+  // FIX: was using absolute clientX/Y as delta — caused massive jump on first mousemove.
+  // Now uses panRef to track the last position and compute a true delta each move event.
   const onPanStart = useCallback(e => {
-    const sx = e.clientX, sy = e.clientY
-    const move = ev => setTransform(t => ({ ...t, x: t.x + (ev.clientX - sx), y: t.y + (ev.clientY - sy) }))
-    const up   = ()  => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up) }
-    window.addEventListener("mousemove", move); window.addEventListener("mouseup", up)
+    panRef.current = { x: e.clientX, y: e.clientY }
+    const move = ev => {
+      if (!panRef.current) return
+      const dx = ev.clientX - panRef.current.x
+      const dy = ev.clientY - panRef.current.y
+      panRef.current = { x: ev.clientX, y: ev.clientY }
+      setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }))
+    }
+    const up = () => {
+      panRef.current = null
+      window.removeEventListener("mousemove", move)
+      window.removeEventListener("mouseup", up)
+    }
+    window.addEventListener("mousemove", move)
+    window.addEventListener("mouseup", up)
   }, [])
 
   return (
     <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: T.surfaceAlt }}>
       <div style={{ flexShrink: 0 }}><GraphSearch /></div>
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-        <svg width={width} height={height} onWheel={onWheel} onMouseDown={onPanStart}
+        <svg ref={svgRef} width={width} height={height} onWheel={onWheel} onMouseDown={onPanStart}
           style={{ background: T.surfaceAlt, cursor: "grab", display: "block" }}>
           <defs>
             <marker id="arr"       markerWidth="6" markerHeight="6" refX="4" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 Z" fill={T.borderHover} /></marker>
