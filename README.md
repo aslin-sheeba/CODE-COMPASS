@@ -18,4 +18,4 @@ npm run dev      # Vite only (browser, no Electron APIs)
 ```
 
 
-******** next plan in th
+******** next update in the version 2****************
