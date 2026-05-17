@@ -1,188 +1,94 @@
-// Pre-lowercased index — optimized for fast searching
+// Pre-lowercased index — avoids repeated .toLowerCase() per query
 let filesIndex = []
 
-// Extract function names from content using regex
-function extractFunctions(content) {
-  const functions = []
-  if (!content) return functions
-  
-  // Match function declarations: function name() {}, const name = () => {}, export function name() {}
+// Extract function/method names from source content
+function extractFunctionNames(content) {
+  const names = new Set()
   const patterns = [
-    /(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g,
-    /(?:export\s+)?const\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:async\s*)?\(/g,
-    /(?:export\s+)?(?:async\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:\s*(?:async\s*)?\(/g,
-    /class\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*{/g,
+    /function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g,
+    /(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:async\s*)?\(/g,
+    /(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:async\s*)?function/g,
+    /([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:\s*(?:async\s*)?function/g,
+    /export\s+(?:default\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
+    /export\s+(?:default\s+)?class\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
   ]
-  
-  for (const pattern of patterns) {
-    let match
-    while ((match = pattern.exec(content)) !== null) {
-      if (match[1] && !functions.includes(match[1])) {
-        functions.push(match[1])
-      }
+  for (const re of patterns) {
+    re.lastIndex = 0
+    let m
+    while ((m = re.exec(content)) !== null) {
+      if (m[1] && m[1].length > 1) names.add(m[1])
     }
   }
-  
-  return functions
+  return [...names]
+}
+
+function extractModuleName(path) {
+  return (path || "").replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "")
 }
 
 export function buildIndex(files) {
   filesIndex = files.map(f => {
-    const path = f.path || ""
-    const realPath = f.realPath || f.path || ""
-    const fileName = path.split(/[\\/]/).pop() || ""
-    const fileExt = fileName.match(/\.[^.]+$/)?.[0] || ""
-    const content = f.content || ""
-    const imports = f.imports || []
-    const functions = extractFunctions(content)
-    
+    const fns = extractFunctionNames(f.content || "")
     return {
-      path,
-      realPath,
-      pathLower:    path.toLowerCase(),
-      fileName,
-      fileNameLower: fileName.toLowerCase(),
-      fileExt,
-      imports,
-      importsLower: imports.map(i => i.toLowerCase()),
-      functions,
-      functionsLower: functions.map(fn => fn.toLowerCase()),
-      content,
-      lines:        content.split("\n"),
-      linesLower:   content.toLowerCase().split("\n"),
+      path:               f.path,
+      pathLower:          f.path.toLowerCase(),
+      moduleName:         extractModuleName(f.path),
+      moduleNameLower:    extractModuleName(f.path).toLowerCase(),
+      imports:            f.imports || [],
+      importsLower:       (f.imports || []).map(i => i.toLowerCase()),
+      content:            f.content || "",
+      lines:              (f.content || "").split("\n"),
+      linesLower:         (f.content || "").toLowerCase().split("\n"),
+      functionNames:      fns,
+      functionNamesLower: fns.map(n => n.toLowerCase()),
     }
   })
 }
 
-// Core search with type support
-export function search(query, filterType = "all") {
+export function search(query, { filterType = "all" } = {}) {
   if (!query || !query.trim()) return []
-  const q = query.toLowerCase()
-  const results = []
-  const seen = new Set()
-
-  for (const file of filesIndex) {
-    // Search by file name
-    if (filterType === "all" || filterType === "filename") {
-      if (file.fileNameLower.includes(q)) {
-        const key = `${file.path}:filename`
-        if (!seen.has(key)) {
-          seen.add(key)
-          results.push({
-            type: "filename",
-            path: file.path,
-            realPath: file.realPath,
-            fileName: file.fileName,
-            line: null,
-            snippet: `File: ${file.fileName}`,
-            priority: 10
-          })
-        }
-      }
-    }
-
-    // Search by function names
-    if (filterType === "all" || filterType === "function") {
-      for (const fn of file.functionsLower) {
-        if (fn.includes(q)) {
-          const key = `${file.path}:${fn}`
-          if (!seen.has(key)) {
-            seen.add(key)
-            results.push({
-              type: "function",
-              path: file.path,
-              realPath: file.realPath,
-              fileName: file.fileName,
-              line: null,
-              snippet: `Function: ${file.functions[file.functionsLower.indexOf(fn)]}()`,
-              priority: 8
-            })
-          }
-        }
-      }
-    }
-
-    // Search by imports
-    if (filterType === "all" || filterType === "import") {
-      for (let i = 0; i < file.importsLower.length; i++) {
-        if (file.importsLower[i].includes(q)) {
-          const key = `${file.path}:import:${i}`
-          if (!seen.has(key)) {
-            seen.add(key)
-            results.push({
-              type: "import",
-              path: file.path,
-              realPath: file.realPath,
-              fileName: file.fileName,
-              line: null,
-              snippet: `Import: ${file.imports[i]}`,
-              priority: 7
-            })
-          }
-        }
-      }
-    }
-
-    // Search by content (code lines)
-    if (filterType === "all" || filterType === "content") {
-      for (let i = 0; i < file.linesLower.length; i++) {
-        if (file.linesLower[i] && file.linesLower[i].includes(q)) {
-          const key = `${file.path}:line:${i}`
-          if (!seen.has(key)) {
-            seen.add(key)
-            results.push({
-              type: "content",
-              path: file.path,
-              realPath: file.realPath,
-              fileName: file.fileName,
-              line: i + 1,
-              snippet: file.lines[i].trim(),
-              priority: 5
-            })
-          }
-        }
-      }
-    }
-  }
-
-  // Sort by priority (higher first), then by path
-  return results.sort((a, b) => {
-    if (b.priority !== a.priority) return b.priority - a.priority
-    return a.path.localeCompare(b.path)
-  })
-}
-
-// Filter searches by file extension
-export function searchByExtension(query, extension) {
-  if (!query || !query.trim()) return []
-  const q = query.toLowerCase()
-  const ext = extension.toLowerCase()
+  const q       = query.toLowerCase()
   const results = []
 
   for (const file of filesIndex) {
-    if (!file.fileExt.toLowerCase().includes(ext)) continue
+    if (filterType === "function") {
+      const matchedFns = file.functionNames.filter((_, i) => file.functionNamesLower[i].includes(q))
+      for (const fn of matchedFns) {
+        const lineIdx = file.linesLower.findIndex(l => l && l.includes(fn.toLowerCase()) &&
+          (l.includes("function") || l.includes("=>") || l.includes("const") || l.includes("class")))
+        results.push({
+          path: file.path,
+          line: lineIdx >= 0 ? lineIdx + 1 : null,
+          snippet: lineIdx >= 0 ? file.lines[lineIdx].trim() : `function: ${fn}`,
+          matchType: "function",
+          matchedName: fn,
+        })
+      }
+      continue
+    }
 
-    if (file.fileNameLower.includes(q)) {
-      results.push({
-        type: "filename",
-        path: file.path,
-        fileName: file.fileName,
-        snippet: file.fileName,
-        priority: 10
-      })
+    if (filterType === "module") {
+      if (file.moduleNameLower.includes(q)) {
+        results.push({ path: file.path, line: null, snippet: null, matchType: "module" })
+      }
+      continue
+    }
+
+    // Default "all": path → imports → content
+    if (file.pathLower.includes(q)) {
+      results.push({ path: file.path, line: null, snippet: null, matchType: "path" })
+      continue
+    }
+
+    const impIdx = file.importsLower.findIndex(i => i.includes(q))
+    if (impIdx !== -1) {
+      results.push({ path: file.path, line: null, snippet: `import: ${file.imports[impIdx]}`, matchType: "import" })
       continue
     }
 
     for (let i = 0; i < file.linesLower.length; i++) {
       if (file.linesLower[i] && file.linesLower[i].includes(q)) {
-        results.push({
-          type: "content",
-          path: file.path,
-          fileName: file.fileName,
-          line: i + 1,
-          snippet: file.lines[i].trim(),
-          priority: 5
-        })
+        results.push({ path: file.path, line: i + 1, snippet: file.lines[i].trim(), matchType: "content" })
         break
       }
     }
@@ -191,77 +97,7 @@ export function searchByExtension(query, extension) {
   return results
 }
 
-// Search for unused files (files with no imports from others)
-export function findUnusedFiles() {
-  const results = []
-  const importedFiles = new Set()
-
-  // Track which files are imported
-  for (const file of filesIndex) {
-    for (const imp of file.imports) {
-      const normalized = imp.toLowerCase().replace(/\.[^.]+$/, "").replace(/\\/g, "/")
-      importedFiles.add(normalized)
-    }
-  }
-
-  // Find files not imported anywhere
-  for (const file of filesIndex) {
-    const fileName = file.fileName.replace(/\.[^.]+$/, "").toLowerCase()
-    const isEntryPoint = file.fileName.match(/^(main|index|app)\./i)
-    
-    if (!importedFiles.has(fileName) && !isEntryPoint) {
-      results.push({
-        type: "unused",
-        path: file.path,
-        fileName: file.fileName,
-        snippet: "No incoming imports"
-      })
-    }
-  }
-
-  return results
-}
-
-// Search by dependency pattern (what imports what)
-export function searchDependencies(query) {
-  if (!query || !query.trim()) return []
-  const q = query.toLowerCase()
-  const results = []
-
-  for (const file of filesIndex) {
-    // Files that import the query
-    for (const imp of file.imports) {
-      if (imp.toLowerCase().includes(q)) {
-        results.push({
-          type: "dependency",
-          path: file.path,
-          realPath: file.realPath,
-          fileName: file.fileName,
-          snippet: `Imports: ${imp}`,
-          direction: "imports"
-        })
-      }
-    }
-
-    // Files that are imported by the query
-    const fileName = file.fileName.replace(/\.[^.]+$/, "").toLowerCase()
-    if (fileName.includes(q)) {
-      for (const otherFile of filesIndex) {
-        for (const imp of otherFile.imports) {
-          if (imp.toLowerCase().includes(fileName)) {
-            results.push({
-              type: "dependency",
-              path: otherFile.path,
-              realPath: otherFile.realPath,
-              fileName: otherFile.fileName,
-              snippet: `Imports: ${file.fileName}`,
-              direction: "imported-by"
-            })
-          }
-        }
-      }
-    }
-  }
-
-  return results
+export function getFunctionNames(filePath) {
+  const file = filesIndex.find(f => f.path === filePath)
+  return file ? file.functionNames : []
 }
