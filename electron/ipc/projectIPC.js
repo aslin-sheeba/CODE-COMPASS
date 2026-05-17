@@ -126,10 +126,29 @@ ipcMain.handle("github:clone", async (_event, { repoUrl, branch, token }) => {
 // ─── IPC: file:write ──────────────────────────────────────────────────────────
 ipcMain.handle("file:write", async (_event, { filePath, newContent }) => {
   try {
-    if (!fs.existsSync(filePath)) return { error: `File not found: ${filePath}` }
-    await fs.promises.writeFile(filePath, newContent, "utf8")
-    return { success: true }
+    if (!filePath || typeof filePath !== "string") {
+      return { error: "Invalid file path" }
+    }
+    
+    // Ensure the path is absolute or resolve it
+    const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath)
+    
+    if (!fs.existsSync(resolvedPath)) {
+      return { error: `File not found: ${resolvedPath}` }
+    }
+    
+    // Write the file synchronously to ensure completion
+    fs.writeFileSync(resolvedPath, newContent, "utf8")
+    
+    // Verify the write was successful
+    const written = fs.readFileSync(resolvedPath, "utf8")
+    if (written === newContent) {
+      return { success: true, path: resolvedPath }
+    } else {
+      return { error: "File write verification failed" }
+    }
   } catch (err) {
+    console.error("file:write error:", err)
     return { error: `Write failed: ${err.message}` }
   }
 })

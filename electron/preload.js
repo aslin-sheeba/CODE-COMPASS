@@ -12,14 +12,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("project:scan-progress", (_event, progress) => cb(progress)),
 
   // ─── GitHub ─────────────────────────────────────────────────────────────────
-  // New names (used by projectService.js)
   getBranches: (repoUrl, token) =>
     ipcRenderer.invoke("github:get-branches", { repoUrl, token }),
 
   cloneRepo: (repoUrl, branch, token) =>
     ipcRenderer.invoke("github:clone", { repoUrl, branch, token }),
 
-  // Legacy names (used directly by GitHubImportModel.jsx)
   getGitHubBranches: ({ repoUrl, token }) =>
     ipcRenderer.invoke("github:get-branches", { repoUrl, token }),
 
@@ -30,11 +28,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("github:clone-progress", (_event, data) => cb(data)),
 
   // ─── File ───────────────────────────────────────────────────────────────────
-  // New name (used by projectService.js)
   writeFile: (filePath, newContent) =>
     ipcRenderer.invoke("file:write", { filePath, newContent }),
 
-  // Legacy name (used directly by CodeSearch.jsx)
   writeFileLine: ({ filePath, newContent }) =>
     ipcRenderer.invoke("file:write", { filePath, newContent }),
 
@@ -48,18 +44,29 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getGitStatus: (projectPath) =>
     ipcRenderer.invoke("git:status", projectPath),
 
-  // New name (used by projectService.js)
   commitAndPush: (projectPath, message, push) =>
     ipcRenderer.invoke("git:commit-push", { projectPath, message, push }),
 
-  // Legacy name (used directly by GitActivity.jsx)
   gitCommitPush: (projectPath, message, push) =>
     ipcRenderer.invoke("git:commit-push", { projectPath, message, push }),
 
   openInVSCode: (projectPath) =>
     ipcRenderer.invoke("git:open-vscode", projectPath),
 
-  // ─── Cleanup: remove listeners to avoid memory leaks ───────────────────────
+  // ─── Session (V2) ───────────────────────────────────────────────────────────
+  saveSession: (projectRoot, branch, data) =>
+    ipcRenderer.invoke("session:save", { projectRoot, branch, data }),
+
+  loadSession: (projectRoot, branch) =>
+    ipcRenderer.invoke("session:load", { projectRoot, branch }),
+
+  listSessions: (projectRoot) =>
+    ipcRenderer.invoke("session:list", { projectRoot }),
+
+  clearSession: (projectRoot) =>
+    ipcRenderer.invoke("session:clear", { projectRoot }),
+
+  // ─── Cleanup ────────────────────────────────────────────────────────────────
   removeAllListeners: (channel) =>
     ipcRenderer.removeAllListeners(channel),
 })

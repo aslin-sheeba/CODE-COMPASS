@@ -2,28 +2,39 @@
 const { app, BrowserWindow } = require("electron")
 const path = require("path")
 
-// projectIPC registers ALL handlers:
-//   project:select, github:get-branches, github:clone,
-//   file:write, git:data, git:diff, git:status, git:commit-push, git:open-vscode
-// Do NOT require gitIPC here — it would re-register the same channels and crash.
 require("./ipc/projectIPC")
+require("./ipc/sessionIPC")   // Phase 2: session persistence
 
 let mainWindow
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1280,
+    height: 820,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true
+      contextIsolation: true,
+      sandbox: true,
+      enableRemoteModule: false,
+      nodeIntegration: false
     }
   })
-
-  // Load Vite React app
+  
+  // Set Content Security Policy (stricter in production)
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    const cspPolicy = app.isPackaged
+      ? "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none';"
+      : "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' http://localhost:* https: ws: wss:; font-src 'self'; object-src 'none'; base-uri 'self';"
+    
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [cspPolicy]
+      }
+    })
+  })
+  
   mainWindow.loadURL("http://localhost:5173")
-
-  // Open DevTools only when the app is not packaged (development)
   if (!app.isPackaged) {
     mainWindow.webContents.openDevTools()
   }
